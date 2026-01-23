@@ -477,7 +477,6 @@ apabila ada fitur yang kurang stabil atau tidak berjalan sempurna.
 ━━━━━━━━━━━━━━━━━━
 📌 *Daftar Fitur Bot*
 
-⚠️ *fitur stiker masih error*
 🖼️ *Stiker*
 • !stiker
   └ Reply gambar / video untuk jadi stiker
