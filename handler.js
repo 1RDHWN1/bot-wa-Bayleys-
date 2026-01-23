@@ -570,9 +570,13 @@ if (command === "suara") {
     return reply(sock, msg, "❗ !suara <teks>");
   }
 
+  if (input.length > 250) {
+    return reply(sock, msg, "❗ Maksimal 250 karakter.");
+  }
+
   const now = Date.now();
-  const lastUsed = ttsCooldown.get(sender) || 0;
-  const remaining = TTS_DELAY - (now - lastUsed);
+  const last = ttsCooldown.get(sender) || 0;
+  const remaining = TTS_DELAY - (now - last);
 
   if (remaining > 0) {
     return reply(
@@ -583,10 +587,9 @@ if (command === "suara") {
   }
 
   try {
-    // set cooldown SEBELUM proses (anti spam cepat)
     ttsCooldown.set(sender, now);
-
     logInfo(`TTS processing | user=${sender.split("@")[0]}`);
+
     const audio = await tts(input);
 
     return reply(sock, msg, {
@@ -596,9 +599,7 @@ if (command === "suara") {
     });
 
   } catch (err) {
-    // rollback cooldown kalau gagal
     ttsCooldown.delete(sender);
-
     logError("TTS ERROR", err);
     return reply(sock, msg, "❌ Gagal membuat suara.");
   }
