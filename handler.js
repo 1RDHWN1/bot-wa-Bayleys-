@@ -38,12 +38,18 @@ function logWarn(msg) {
 
 function logError(msg, err) {
   console.error(`\x1b[31m[ERROR]\x1b[0m ${msg}`);
-  if (err) {
-    console.error(
-      err?.response?.data || err?.message || err
-    );
+
+  if (Buffer.isBuffer(err)) {
+    console.error(err.toString());
+  } else if (err?.message) {
+    console.error(err.message);
+  } else if (err?.response?.data) {
+    console.error(JSON.stringify(err.response.data, null, 2));
+  } else {
+    console.error(err);
   }
 }
+
 
 
 /* ===============================
@@ -98,6 +104,11 @@ function isValidImageBuffer(buffer) {
   return false;
 }
 
+/* ===============================
+   TTS COOLDOWN
+================================ */
+const ttsCooldown = new Map();
+const TTS_DELAY = 15_000; // 15 detik
 
 
 /* ===============================
@@ -556,11 +567,25 @@ ${content}
     ================================ */
 if (command === "suara") {
   if (!input) {
-    logWarn(`TTS called without input by ${sender}`);
     return reply(sock, msg, "❗ !suara <teks>");
   }
 
+  const now = Date.now();
+  const lastUsed = ttsCooldown.get(sender) || 0;
+  const remaining = TTS_DELAY - (now - lastUsed);
+
+  if (remaining > 0) {
+    return reply(
+      sock,
+      msg,
+      `⏳ Tunggu *${Math.ceil(remaining / 1000)} detik* sebelum pakai TTS lagi.`
+    );
+  }
+
   try {
+    // set cooldown SEBELUM proses (anti spam cepat)
+    ttsCooldown.set(sender, now);
+
     logInfo(`TTS processing | user=${sender.split("@")[0]}`);
     const audio = await tts(input);
 
@@ -569,7 +594,11 @@ if (command === "suara") {
       mimetype: "audio/ogg; codecs=opus",
       ptt: true
     });
+
   } catch (err) {
+    // rollback cooldown kalau gagal
+    ttsCooldown.delete(sender);
+
     logError("TTS ERROR", err);
     return reply(sock, msg, "❌ Gagal membuat suara.");
   }
