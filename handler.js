@@ -554,15 +554,27 @@ ${content}
     /* ===============================
        SUARA / TTS
     ================================ */
-    if (command === "suara") {
-      if (!input) return reply(sock, msg, "❗ !suara <teks>");
-      const audio = await tts(input);
-      return reply(sock, msg, {
-        audio,
-        mimetype: "audio/ogg; codecs=opus",
-        ptt: true
-      });
-    }
+if (command === "suara") {
+  if (!input) {
+    logWarn(`TTS called without input by ${sender}`);
+    return reply(sock, msg, "❗ !suara <teks>");
+  }
+
+  try {
+    logInfo(`TTS processing | user=${sender.split("@")[0]}`);
+    const audio = await tts(input);
+
+    return reply(sock, msg, {
+      audio,
+      mimetype: "audio/ogg; codecs=opus",
+      ptt: true
+    });
+  } catch (err) {
+    logError("TTS ERROR", err);
+    return reply(sock, msg, "❌ Gagal membuat suara.");
+  }
+}
+
 
     /* ===============================
        TAG
