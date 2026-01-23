@@ -130,7 +130,8 @@ logInfo(
 
 
     // ⛔ anti loop
-    if (msg.key.fromMe && !text.startsWith("!")) return;
+    if (msg.key.fromMe && !msg.key.remoteJid.endsWith("@g.us")) return;
+
 
     /* ===============================
        1️⃣ HANDLE YTSEARCH NUMBER REPLY
