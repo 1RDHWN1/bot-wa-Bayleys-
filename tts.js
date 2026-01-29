@@ -1,10 +1,10 @@
 import axios from "axios";
 import fs from "fs";
-import path from "path";
+import path from "path"; // ✅ WAJIB
 import ffmpeg from "fluent-ffmpeg";
 import ffmpegPath from "ffmpeg-static";
 
-ffmpeg.setFfmpegPath(ffmpegPath);
+
 
 export async function tts(text) {
   const apiKey = process.env.ELEVEN_API_KEY;
@@ -17,8 +17,12 @@ export async function tts(text) {
   const mp3Path = path.join(process.cwd(), `tts_${id}.mp3`);
   const oggPath = path.join(process.cwd(), `tts_${id}.ogg`);
 
+  console.log("[TTS] ▶️ Start");
+  console.log("[TTS] Voice ID :", voiceId);
+  console.log("[TTS] Text len :", text.length);
+
   try {
-    // 1️⃣ ElevenLabs → MP3
+    // 1️⃣ Request ke ElevenLabs
     const res = await axios.post(
       `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`,
       {
@@ -39,6 +43,9 @@ export async function tts(text) {
       }
     );
 
+    console.log("[TTS] ✅ ElevenLabs OK");
+    console.log("[TTS] Audio size:", res.data.length, "bytes");
+
     fs.writeFileSync(mp3Path, Buffer.from(res.data));
 
     // 2️⃣ Convert MP3 → OGG OPUS
@@ -48,23 +55,56 @@ export async function tts(text) {
         .audioBitrate("64k")
         .format("ogg")
         .save(oggPath)
-        .on("end", resolve)
-        .on("error", reject);
+        .on("end", () => {
+          console.log("[TTS] 🔄 Convert MP3 → OGG sukses");
+          resolve();
+        })
+        .on("error", err => {
+          console.error("[TTS] ❌ FFmpeg error:", err.message);
+          reject(err);
+        });
     });
 
     const oggBuffer = fs.readFileSync(oggPath);
+    console.log("[TTS] 📦 Final OGG size:", oggBuffer.length, "bytes");
 
     return oggBuffer;
 
+  } catch (err) {
+    console.error("\n[TTS] ❌ ERROR TERJADI");
+
+    if (err.response) {
+      console.error("[TTS] HTTP STATUS :", err.response.status);
+      console.error("[TTS] RESPONSE   :", JSON.stringify(
+        err.response.data,
+        null,
+        2
+      ));
+
+      if (err.response.status === 402) {
+        console.error("[TTS] 🔥 PENYEBAB: Quota habis / billing belum aktif");
+      } else if (err.response.status === 401) {
+        console.error("[TTS] 🔑 PENYEBAB: API key salah / revoked");
+      } else if (err.response.status === 404) {
+        console.error("[TTS] 🎙️ PENYEBAB: Voice ID tidak ditemukan");
+      }
+    } else if (err.code === "ECONNABORTED") {
+      console.error("[TTS] ⏱️ Timeout ke ElevenLabs");
+    } else {
+      console.error("[TTS] ERROR :", err.message || err);
+    }
+
+    throw err;
+
   } finally {
+    // Cleanup
     setTimeout(() => {
       try { fs.unlinkSync(mp3Path); } catch {}
       try { fs.unlinkSync(oggPath); } catch {}
+      console.log("[TTS] 🧹 Cleanup selesai");
     }, 1500);
   }
 }
-
-
 
 
 // tts google
