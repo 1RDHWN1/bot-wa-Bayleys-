@@ -565,18 +565,15 @@ ${content}
     /* ===============================
        SUARA / TTS
     ================================ */
+
 if (command === "suara") {
   if (!input) {
     return reply(sock, msg, "❗ !suara <teks>");
   }
 
-  if (input.length > 250) {
-    return reply(sock, msg, "❗ Maksimal 250 karakter.");
-  }
-
   const now = Date.now();
-  const last = ttsCooldown.get(sender) || 0;
-  const remaining = TTS_DELAY - (now - last);
+  const lastUsed = ttsCooldown.get(sender) || 0;
+  const remaining = TTS_DELAY - (now - lastUsed);
 
   if (remaining > 0) {
     return reply(
@@ -587,9 +584,10 @@ if (command === "suara") {
   }
 
   try {
+    // set cooldown SEBELUM proses (anti spam cepat)
     ttsCooldown.set(sender, now);
-    logInfo(`TTS processing | user=${sender.split("@")[0]}`);
 
+    logInfo(`TTS processing | user=${sender.split("@")[0]}`);
     const audio = await tts(input);
 
     return reply(sock, msg, {
@@ -599,11 +597,54 @@ if (command === "suara") {
     });
 
   } catch (err) {
+    // rollback cooldown kalau gagal
     ttsCooldown.delete(sender);
+
     logError("TTS ERROR", err);
     return reply(sock, msg, "❌ Gagal membuat suara.");
   }
 }
+
+    // google TTS
+// if (command === "suara") {
+//   if (!input) {
+//     return reply(sock, msg, "❗ !suara <teks>");
+//   }
+
+//   if (input.length > 250) {
+//     return reply(sock, msg, "❗ Maksimal 250 karakter.");
+//   }
+
+//   const now = Date.now();
+//   const last = ttsCooldown.get(sender) || 0;
+//   const remaining = TTS_DELAY - (now - last);
+
+//   if (remaining > 0) {
+//     return reply(
+//       sock,
+//       msg,
+//       `⏳ Tunggu *${Math.ceil(remaining / 1000)} detik* sebelum pakai TTS lagi.`
+//     );
+//   }
+
+//   try {
+//     ttsCooldown.set(sender, now);
+//     logInfo(`TTS processing | user=${sender.split("@")[0]}`);
+
+//     const audio = await tts(input);
+
+//     return reply(sock, msg, {
+//       audio,
+//       mimetype: "audio/ogg; codecs=opus",
+//       ptt: true
+//     });
+
+//   } catch (err) {
+//     ttsCooldown.delete(sender);
+//     logError("TTS ERROR", err);
+//     return reply(sock, msg, "❌ Gagal membuat suara.");
+//   }
+// }
 
 
     /* ===============================
