@@ -352,6 +352,147 @@ function logCommandResult({
   } else {
     logWarn(line);
   }
+
+  recordCommandStats(command, status, durationMs);
+}
+
+const DOWNLOADER_COMMANDS = new Set([
+  "yta",
+  "yt-choice-audio",
+  "yt-choice-video",
+  "ytsearch-pick",
+  "tt",
+  "ig"
+]);
+
+const runtimeStats = {
+  startedAt: Date.now(),
+  totals: { ok: 0, fail: 0 },
+  downloader: { ok: 0, fail: 0 },
+  commands: new Map()
+};
+
+function recordCommandStats(command, status, durationMs = 0) {
+  const key = String(command || "unknown");
+  const stat = runtimeStats.commands.get(key) || {
+    total: 0,
+    ok: 0,
+    fail: 0,
+    totalDurationMs: 0,
+    lastAt: 0
+  };
+
+  stat.total += 1;
+  stat.totalDurationMs += Number(durationMs) || 0;
+  stat.lastAt = Date.now();
+
+  if (status === "OK") {
+    stat.ok += 1;
+    runtimeStats.totals.ok += 1;
+    if (DOWNLOADER_COMMANDS.has(key)) runtimeStats.downloader.ok += 1;
+  } else {
+    stat.fail += 1;
+    runtimeStats.totals.fail += 1;
+    if (DOWNLOADER_COMMANDS.has(key)) runtimeStats.downloader.fail += 1;
+  }
+
+  runtimeStats.commands.set(key, stat);
+}
+
+const rateLimitStore = new Map();
+
+function hitRateLimit(userKey, bucket, limit, windowMs) {
+  const now = Date.now();
+  const key = `${userKey}:${bucket}`;
+  const existing = rateLimitStore.get(key) || [];
+  const active = existing.filter(ts => now - ts < windowMs);
+
+  if (active.length >= limit) {
+    rateLimitStore.set(key, active);
+    const retryMs = windowMs - (now - active[0]);
+    return { limited: true, retryMs };
+  }
+
+  active.push(now);
+  rateLimitStore.set(key, active);
+  return { limited: false, retryMs: 0 };
+}
+
+async function enforceRateLimit({
+  sock,
+  msg,
+  senderKey,
+  bucket,
+  limit,
+  windowMs,
+  commandLabel,
+  sender,
+  jid
+}) {
+  const r = hitRateLimit(senderKey, bucket, limit, windowMs);
+  if (!r.limited) return false;
+
+  const waitSec = Math.max(1, Math.ceil(r.retryMs / 1000));
+  logCommandResult({
+    command: commandLabel,
+    sender,
+    jid,
+    status: "FAIL",
+    reason: `rate limit (${bucket}) ${waitSec}s`,
+    durationMs: 0
+  });
+
+  await reply(
+    sock,
+    msg,
+    `⏳ Terlalu cepat. Coba lagi dalam *${waitSec} detik* untuk command ini.`
+  );
+  return true;
+}
+
+const downloaderQueue = [];
+let downloaderQueueActive = false;
+
+function enqueueDownloaderTask(taskName, worker) {
+  const position = (downloaderQueueActive ? 1 : 0) + downloaderQueue.length + 1;
+  let resolveTask;
+  let rejectTask;
+
+  const promise = new Promise((resolve, reject) => {
+    resolveTask = resolve;
+    rejectTask = reject;
+  });
+
+  downloaderQueue.push({
+    taskName,
+    worker,
+    resolveTask,
+    rejectTask
+  });
+
+  processDownloaderQueue();
+  return { position, promise };
+}
+
+async function processDownloaderQueue() {
+  if (downloaderQueueActive) return;
+  const task = downloaderQueue.shift();
+  if (!task) return;
+
+  downloaderQueueActive = true;
+  try {
+    const result = await task.worker();
+    task.resolveTask(result);
+  } catch (err) {
+    task.rejectTask(err);
+  } finally {
+    downloaderQueueActive = false;
+    processDownloaderQueue();
+  }
+}
+
+function getDownloaderQueueSize() {
+  return downloaderQueue.length + (downloaderQueueActive ? 1 : 0);
 }
 
 /* ===============================
@@ -368,6 +509,7 @@ export default async function handler(sock, msg) {
   const jid = msg?.key?.remoteJid || "unknown";
   const sender = msg?.key?.participant || msg?.key?.remoteJid || "unknown";
   const text = getText(msg)?.trim();
+  const senderRateKey = normalizeJid(sender) || sender;
 
   try {
     if (!text) return;
@@ -389,6 +531,22 @@ export default async function handler(sock, msg) {
     if (/^[1-2]$/.test(text)) {
       const ytChoice = ytChoiceCache.get(sender);
       if (ytChoice) {
+        if (
+          await enforceRateLimit({
+            sock,
+            msg,
+            senderKey: senderRateKey,
+            bucket: "downloader",
+            limit: 6,
+            windowMs: 60_000,
+            commandLabel: "yt-choice",
+            sender,
+            jid
+          })
+        ) {
+          return;
+        }
+
         const expired = Date.now() - ytChoice.createdAt > YT_CHOICE_TTL_MS;
         if (expired) {
           ytChoiceCache.delete(sender);
@@ -400,7 +558,15 @@ export default async function handler(sock, msg) {
         if (text === "1") {
           await reply(sock, msg, "🎧 Mengambil audio (MP3)...");
           try {
-            const audioPath = await downloadYouTubeAudio(ytChoice.url);
+            const queued = enqueueDownloaderTask(
+              "yt-choice-audio",
+              () => downloadYouTubeAudio(ytChoice.url)
+            );
+            if (queued.position > 1) {
+              await reply(sock, msg, `⏳ Antrean downloader: posisi *${queued.position}*.`);
+            }
+
+            const audioPath = await queued.promise;
             await reply(sock, msg, {
               audio: { url: audioPath },
               mimetype: "audio/mpeg"
@@ -434,7 +600,15 @@ export default async function handler(sock, msg) {
 
         await reply(sock, msg, "🎬 Mengambil video (MP4)...");
         try {
-          const videoPath = await downloadYouTubeVideo(ytChoice.url);
+          const queued = enqueueDownloaderTask(
+            "yt-choice-video",
+            () => downloadYouTubeVideo(ytChoice.url)
+          );
+          if (queued.position > 1) {
+            await reply(sock, msg, `⏳ Antrean downloader: posisi *${queued.position}*.`);
+          }
+
+          const videoPath = await queued.promise;
           await reply(sock, msg, {
             video: { url: videoPath },
             caption: "🎬 Berhasil mengunduh video."
@@ -470,6 +644,21 @@ export default async function handler(sock, msg) {
     if (/^[1-5]$/.test(text)) {
       const cache = ytSearchCache.get(sender);
       if (!cache) return;
+      if (
+        await enforceRateLimit({
+          sock,
+          msg,
+          senderKey: senderRateKey,
+          bucket: "downloader",
+          limit: 6,
+          windowMs: 60_000,
+          commandLabel: "ytsearch-pick",
+          sender,
+          jid
+        })
+      ) {
+        return;
+      }
 
       const selected = cache[Number(text) - 1];
       if (!selected) return;
@@ -480,7 +669,15 @@ export default async function handler(sock, msg) {
 
       try {
         const ytUrl = normalizeYouTubeUrl(selected.url) || selected.url;
-        const audioPath = await downloadYouTubeAudio(ytUrl);
+        const queued = enqueueDownloaderTask(
+          "ytsearch-pick",
+          () => downloadYouTubeAudio(ytUrl)
+        );
+        if (queued.position > 1) {
+          await reply(sock, msg, `⏳ Antrean downloader: posisi *${queued.position}*.`);
+        }
+
+        const audioPath = await queued.promise;
         await reply(sock, msg, {
           audio: { url: audioPath },
           mimetype: "audio/mpeg"
@@ -707,6 +904,22 @@ if (command === "stiker" || command === "sticker") {
        YTA (DIRECT LINK)
     ================================ */
     if (command === "yta") {
+      if (
+        await enforceRateLimit({
+          sock,
+          msg,
+          senderKey: senderRateKey,
+          bucket: "downloader",
+          limit: 6,
+          windowMs: 60_000,
+          commandLabel: command,
+          sender,
+          jid
+        })
+      ) {
+        return;
+      }
+
       const ytUrl = normalizeYouTubeUrl(input);
       if (!ytUrl) {
         logFail("link youtube tidak valid");
@@ -720,7 +933,12 @@ if (command === "stiker" || command === "sticker") {
       await reply(sock, msg, "🎧 Mengambil audio (yt-dlp)...");
 
       try {
-        const audioPath = await downloadYouTubeAudio(ytUrl);
+        const queued = enqueueDownloaderTask(command, () => downloadYouTubeAudio(ytUrl));
+        if (queued.position > 1) {
+          await reply(sock, msg, `⏳ Antrean downloader: posisi *${queued.position}*.`);
+        }
+
+        const audioPath = await queued.promise;
         await reply(sock, msg, {
           audio: { url: audioPath },
           mimetype: "audio/mpeg"
@@ -769,6 +987,22 @@ if (command === "stiker" || command === "sticker") {
        TIKTOK
     ================================ */
     if (command === "tt") {
+      if (
+        await enforceRateLimit({
+          sock,
+          msg,
+          senderKey: senderRateKey,
+          bucket: "downloader",
+          limit: 6,
+          windowMs: 60_000,
+          commandLabel: command,
+          sender,
+          jid
+        })
+      ) {
+        return;
+      }
+
       if (!/(tiktok\.com|vt\.tiktok\.com|vm\.tiktok\.com)/i.test(input)) {
         logFail("link tiktok tidak valid");
         return reply(sock, msg, "❗ Link TikTok tidak valid");
@@ -777,7 +1011,12 @@ if (command === "stiker" || command === "sticker") {
       await reply(sock, msg, "📥 Mengunduh TikTok...");
 
       try {
-        const data = await downloadTikTok(input);
+        const queued = enqueueDownloaderTask(command, () => downloadTikTok(input));
+        if (queued.position > 1) {
+          await reply(sock, msg, `⏳ Antrean downloader: posisi *${queued.position}*.`);
+        }
+
+        const data = await queued.promise;
         await reply(sock, msg, {
           video: { url: data.video },
           caption: `🎵 ${data.title}\n👤 ${data.author}`
@@ -801,6 +1040,22 @@ if (command === "stiker" || command === "sticker") {
        INSTAGRAM
     ================================ */
     if (command === "ig") {
+      if (
+        await enforceRateLimit({
+          sock,
+          msg,
+          senderKey: senderRateKey,
+          bucket: "downloader",
+          limit: 6,
+          windowMs: 60_000,
+          commandLabel: command,
+          sender,
+          jid
+        })
+      ) {
+        return;
+      }
+
       if (!/(instagram\.com|instagr\.am)/i.test(input)) {
         logFail("link instagram tidak valid");
         return reply(sock, msg, "❗ Link Instagram tidak valid");
@@ -809,7 +1064,12 @@ if (command === "stiker" || command === "sticker") {
       await reply(sock, msg, "📸 Mengunduh Instagram...");
 
       try {
-        const video = await downloadInstagram(input);
+        const queued = enqueueDownloaderTask(command, () => downloadInstagram(input));
+        if (queued.position > 1) {
+          await reply(sock, msg, `⏳ Antrean downloader: posisi *${queued.position}*.`);
+        }
+
+        const video = await queued.promise;
         await reply(sock, msg, { video: { url: video } });
 
         if (typeof video === "string" && fs.existsSync(video)) {
@@ -896,6 +1156,22 @@ ${prakiraan}
        GAMBAR (CSE)
     ================================ */
     if (command === "gambar" || command === "image") {
+      if (
+        await enforceRateLimit({
+          sock,
+          msg,
+          senderKey: senderRateKey,
+          bucket: "image",
+          limit: 8,
+          windowMs: 60_000,
+          commandLabel: command,
+          sender,
+          jid
+        })
+      ) {
+        return;
+      }
+
       if (!input) {
         logFail("kata kunci kosong");
         return reply(
@@ -1035,6 +1311,7 @@ apabila ada fitur yang kurang stabil atau tidak berjalan sempurna.
 📊 *Status Bot*
 • !ping
 • !status
+• !stats
   └ Cek status bot & server
 
 ━━━━━━━━━━━━━━━━━━
@@ -1059,6 +1336,22 @@ apabila ada fitur yang kurang stabil atau tidak berjalan sempurna.
        AI
     ================================ */
 if (command === "ai") {
+  if (
+    await enforceRateLimit({
+      sock,
+      msg,
+      senderKey: senderRateKey,
+      bucket: "ai",
+      limit: 10,
+      windowMs: 60_000,
+      commandLabel: command,
+      sender,
+      jid
+    })
+  ) {
+    return;
+  }
+
   if (!input) {
     logFail("input ai kosong");
     return reply(
@@ -1551,6 +1844,50 @@ if (command === "suara") {
       logOk(`status ping=${ping}ms net=${netLatency ? `${netLatency}ms` : "off"}`);
       return reply(sock, msg, textStatus);
     }
+
+    if (command === "stats") {
+      const totals = runtimeStats.totals.ok + runtimeStats.totals.fail;
+      const dTotals = runtimeStats.downloader.ok + runtimeStats.downloader.fail;
+      const dFailRate = dTotals
+        ? ((runtimeStats.downloader.fail / dTotals) * 100).toFixed(1)
+        : "0.0";
+      const uptime = formatUptime(Date.now() - runtimeStats.startedAt);
+      const topCommands = Array.from(runtimeStats.commands.entries())
+        .sort((a, b) => b[1].total - a[1].total)
+        .slice(0, 5);
+
+      const topLines = topCommands.length
+        ? topCommands
+            .map(([name, s], i) => {
+              const avg = s.total ? Math.round(s.totalDurationMs / s.total) : 0;
+              return `${i + 1}. ${name} (${s.total}x | ok ${s.ok} | fail ${s.fail} | avg ${avg}ms)`;
+            })
+            .join("\n")
+        : "-";
+
+      const textStats = `
+📊 *RUNTIME STATS*
+━━━━━━━━━━━━━━━━━━
+⏱️ Sejak runtime: ${uptime}
+🧮 Total eksekusi: ${totals}
+✅ Sukses: ${runtimeStats.totals.ok}
+❌ Gagal: ${runtimeStats.totals.fail}
+
+🎬 Downloader:
+• total: ${dTotals}
+• sukses: ${runtimeStats.downloader.ok}
+• gagal: ${runtimeStats.downloader.fail}
+• fail rate: ${dFailRate}%
+• antrean aktif: ${getDownloaderQueueSize()}
+
+🏆 Top Command:
+${topLines}
+`.trim();
+
+      logOk("stats terkirim");
+      return reply(sock, msg, textStats);
+    }
+
     logFail("command tidak dikenali");
  } catch (err) {
   if (typeof text === "string" && text.startsWith("!")) {
