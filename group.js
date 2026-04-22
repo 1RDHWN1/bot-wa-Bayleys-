@@ -1,8 +1,30 @@
+const BOT_FOOTER = "> *pesan otomatis dari bot*";
+
+function addBotFooter(text) {
+  if (typeof text !== "string" || !text.trim()) return text;
+  if (text.includes(BOT_FOOTER)) return text;
+  return `${text}\n\n${BOT_FOOTER}`;
+}
+
+function sendWithFooter(sock, jid, payload) {
+  const content = { ...payload };
+
+  if (typeof content.text === "string") {
+    content.text = addBotFooter(content.text);
+  }
+
+  if (typeof content.caption === "string") {
+    content.caption = addBotFooter(content.caption);
+  }
+
+  return sock.sendMessage(jid, content);
+}
+
 export async function tagAll(sock, msg, text) {
   const jid = msg.key.remoteJid;
 
   if (!jid.endsWith("@g.us")) {
-    return sock.sendMessage(jid, {
+    return sendWithFooter(sock, jid, {
       text: "❌ Perintah ini hanya bisa digunakan di grup."
     });
   }
@@ -29,13 +51,13 @@ _Sorry for the tag._
 _Menandai semua anggota grup (${total} orang)_
 `.trim();
 
-    return sock.sendMessage(jid, {
+    return sendWithFooter(sock, jid, {
       text: messageText,
       mentions
     });
   } catch (err) {
     console.error("❌ tagAll error:", err);
-    return sock.sendMessage(jid, {
+    return sendWithFooter(sock, jid, {
       text: "❌ Gagal menandai anggota grup."
     });
   }
@@ -46,7 +68,7 @@ export async function tagAdmin(sock, msg, text) {
   const jid = msg.key.remoteJid;
 
   if (!jid.endsWith("@g.us")) {
-    return sock.sendMessage(jid, {
+    return sendWithFooter(sock, jid, {
       text: "❌ Perintah ini hanya bisa digunakan di grup."
     });
   }
@@ -73,13 +95,13 @@ export async function tagAdmin(sock, msg, text) {
 _Menandai admin grup (${admins.length} orang)_
 `.trim();
 
-    return sock.sendMessage(jid, {
+    return sendWithFooter(sock, jid, {
       text: messageText,
       mentions
     });
   } catch (err) {
     console.error("❌ tagAdmin error:", err);
-    return sock.sendMessage(jid, {
+    return sendWithFooter(sock, jid, {
       text: "❌ Gagal menandai admin."
     });
   }

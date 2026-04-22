@@ -1,7 +1,9 @@
 import "dotenv/config";
 import makeWASocket, {
   useMultiFileAuthState,
-  DisconnectReason
+  DisconnectReason,
+  Browsers,
+  fetchLatestWaWebVersion
 } from "@whiskeysockets/baileys";
 import Pino from "pino";
 import qrcode from "qrcode-terminal";
@@ -15,18 +17,25 @@ global.stats = {
   group: new Set()
 };
 global.startTime = Date.now();
+let reconnectTimer = null;
 
 /* ===============================
    START BOT
 ================================ */
 async function startBot() {
   const { state, saveCreds } = await useMultiFileAuthState("session");
+  const { version, isLatest } = await fetchLatestWaWebVersion();
 
   const sock = makeWASocket({
     auth: state,
     logger: Pino({ level: "silent" }),
-    browser: ["Bot-WA", "Chrome", "1.0.0"]
+    browser: Browsers.windows("Desktop"),
+    version
   });
+
+  console.log(
+    `🔌 Memakai WA Web version ${version.join(".")} (${isLatest ? "latest" : "fallback"})`
+  );
 
   sock.ev.on("creds.update", saveCreds);
 
@@ -43,11 +52,21 @@ async function startBot() {
 
     if (connection === "close") {
       const code = lastDisconnect?.error?.output?.statusCode;
-      console.log("❌ Koneksi terputus:", code);
+      const reason = lastDisconnect?.error?.message || "unknown";
+      console.log(`❌ Koneksi terputus: ${code} (${reason})`);
 
       if (code !== DisconnectReason.loggedOut) {
-        console.log("🔄 Reconnecting...");
-        startBot();
+        if (reconnectTimer) clearTimeout(reconnectTimer);
+
+        if (code === 405) {
+          console.log("⚠️ 405 biasanya karena koneksi WS ditolak (version/browser/jaringan).");
+        }
+
+        console.log("🔄 Reconnecting dalam 4 detik...");
+        reconnectTimer = setTimeout(() => {
+          reconnectTimer = null;
+          startBot();
+        }, 4000);
       } else {
         console.log("🚪 Logged out. Hapus folder session lalu scan ulang.");
       }

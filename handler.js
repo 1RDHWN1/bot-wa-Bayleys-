@@ -7,7 +7,20 @@ import fs from "fs";
 import os from "os";
 
 import { makeSticker } from "./sticker.js";
-import { askAI } from "./ai.js";
+import { askAI, clearAIHistory, getAIHistorySize } from "./ai.js";
+import {
+  setStoredFact,
+  getStoredFact,
+  deleteStoredFact,
+  listStoredFacts,
+  buildFactsContext,
+  isKnowledgeEditor,
+  addKnowledgeEditor,
+  removeKnowledgeEditor,
+  listKnowledgeEditors,
+  clearKnowledgeEditors,
+  appendKnowledgeAudit
+} from "./knowledge.js";
 import { tts } from "./tts.js";
 import { tagAll, tagAdmin } from "./group.js";
 
@@ -20,10 +33,14 @@ import {
   downloadImage,
   stickerToImage,
   ytSearch,
+  searchYouTubeMusic,
   downloadTikTok,
   downloadInstagram,
   downloadYouTubeAudio,
-  getWeatherWeatherAPI
+  downloadYouTubeVideo,
+  normalizeYouTubeUrl,
+  getWeatherBMKG, 
+  getWeatherIcon
 } from "./utils.js";
 
 
@@ -56,15 +73,34 @@ function logError(msg, err) {
    GLOBAL CACHE (WAJIB DI LUAR)
 ================================ */
 const ytSearchCache = new Map();
+const ytChoiceCache = new Map();
+const YT_CHOICE_TTL_MS = 2 * 60 * 1000;
+const BOT_FOOTER = "> *pesan otomatis dari bot*";
+
+function addBotFooter(text) {
+  if (typeof text !== "string" || !text.trim()) return text;
+  if (text.includes(BOT_FOOTER)) return text;
+  return `${text}\n\n${BOT_FOOTER}`;
+}
 
 /* ===============================
    HELPER REPLY (TAMBAHAN SAJA)
 ================================ */
 function reply(sock, msg, payload) {
   const jid = msg.key.remoteJid;
+  const content = typeof payload === "string" ? { text: payload } : { ...payload };
+
+  if (typeof content.text === "string") {
+    content.text = addBotFooter(content.text);
+  }
+
+  if (typeof content.caption === "string") {
+    content.caption = addBotFooter(content.caption);
+  }
+
   return sock.sendMessage(
     jid,
-    typeof payload === "string" ? { text: payload } : payload,
+    content,
     { quoted: msg }
   );
 }
@@ -86,7 +122,180 @@ function parseImageFlags(text) {
 }
 
 function normalizeJid(jid = "") {
-  return jid.replace(/[^0-9]/g, "");
+  const raw = String(jid || "").trim();
+  if (!raw) return "";
+
+  // Format JID MD bisa seperti: 62812xxxx:12@s.whatsapp.net
+  // Ambil hanya nomor utama sebelum ":" dan sebelum "@"
+  const base = raw.split("@")[0].split(":")[0];
+  return base.replace(/[^0-9]/g, "");
+}
+
+function parseOwnerIds(sock) {
+  const ids = new Set();
+  const envOwnerRaw = String(process.env.OWNER_NUMBER || "");
+
+  envOwnerRaw
+    .split(/[,\s]+/)
+    .map(normalizeJid)
+    .filter(Boolean)
+    .forEach(id => ids.add(id));
+
+  const botPn = normalizeJid(sock?.user?.id || "");
+  const botLid = normalizeJid(sock?.user?.lid || "");
+
+  if (botPn && ids.has(botPn) && botLid) {
+    ids.add(botLid);
+  }
+
+  return ids;
+}
+
+function getSenderRawJids(msg) {
+  const candidates = [
+    msg?.key?.participant,
+    msg?.key?.participantPn,
+    msg?.key?.participantLid,
+    msg?.key?.remoteJid,
+    msg?.participant,
+    msg?.message?.extendedTextMessage?.contextInfo?.participant,
+    msg?.message?.extendedTextMessage?.contextInfo?.participantPn,
+    msg?.message?.extendedTextMessage?.contextInfo?.remoteJid
+  ];
+
+  return Array.from(
+    new Set(
+      candidates
+        .map(v => String(v || "").trim())
+        .filter(Boolean)
+    )
+  );
+}
+
+async function getSenderIds(sock, msg) {
+  const rawJids = getSenderRawJids(msg);
+  const ids = new Set(rawJids.map(normalizeJid).filter(Boolean));
+
+  const lidMapping = sock?.signalRepository?.lidMapping;
+  if (lidMapping?.getPNForLID) {
+    for (const jid of rawJids) {
+      if (!jid.includes("@lid")) continue;
+      try {
+        const pnJid = await lidMapping.getPNForLID(jid);
+        const pn = normalizeJid(pnJid || "");
+        if (pn) ids.add(pn);
+      } catch {
+        // ignore mapping lookup failures
+      }
+    }
+  }
+
+  return Array.from(ids);
+}
+
+function getIdVariants(id = "") {
+  const base = normalizeJid(id);
+  if (!base) return [];
+
+  const out = new Set([base]);
+
+  if (base.startsWith("62") && base.length > 3) {
+    out.add(`0${base.slice(2)}`);
+  }
+  if (base.startsWith("0") && base.length > 3) {
+    out.add(`62${base.slice(1)}`);
+  }
+
+  return Array.from(out);
+}
+
+function hasKnowledgeEditAccess(senderIds = []) {
+  for (const id of senderIds) {
+    const variants = getIdVariants(id);
+    if (variants.some(v => isKnowledgeEditor(v))) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function getMentionedOrQuotedIds(msg) {
+  const ctx = msg?.message?.extendedTextMessage?.contextInfo;
+  const mentioned = Array.isArray(ctx?.mentionedJid) ? ctx.mentionedJid : [];
+  const quoted = [ctx?.participant, ctx?.participantPn];
+  return Array.from(
+    new Set([...mentioned, ...quoted].map(normalizeJid).filter(Boolean))
+  );
+}
+
+function getAIConversationId(jid, sender) {
+  if (jid.endsWith("@g.us")) {
+    return `group:${jid}:${sender}`;
+  }
+
+  return `private:${jid}`;
+}
+
+function getAIKnowledgeScopeId(jid) {
+  if (jid.endsWith("@g.us")) {
+    return `group:${jid}`;
+  }
+
+  return `private:${jid}`;
+}
+
+function getFeatureRedirect(aiInput = "") {
+  const t = String(aiInput || "").toLowerCase();
+  const has = (...words) => words.some(w => t.includes(w));
+
+  if (has("cuaca", "weather", "hujan", "suhu", "prakiraan")) {
+    return "🌦️ Permintaan itu lebih pas pakai fitur cuaca bot.\nGunakan: `!cuaca <lokasi>`\nContoh: `!cuaca Tasikmalaya`";
+  }
+
+  if (has("tiktok.com", "video tiktok", "download tiktok")) {
+    return "🎵 Untuk TikTok, pakai downloader bot.\nGunakan: `!tt <url_tiktok>`";
+  }
+
+  if (has("instagram.com", "download instagram", "video instagram", "reels")) {
+    return "📸 Untuk Instagram, pakai downloader bot.\nGunakan: `!ig <url_instagram>`";
+  }
+
+  if (
+    has("youtube", "yt", "lagu youtube", "audio youtube", "mp3 youtube") &&
+    has("download", "ambil", "convert", "mp3", "audio", "lagu")
+  ) {
+    return "🎧 Untuk audio YouTube, pakai fitur bot:\n• `!yt <watch_url>` (pilih audio/video)\n• `!musik <judul lagu>` (rekomendasi)\n• `!yta <watch_url>`\n• `!ytsearch <judul lagu>`";
+  }
+
+  if (has("cari youtube", "search youtube", "ytsearch", "video youtube")) {
+    return "🔎 Untuk cari video YouTube, gunakan: `!ytsearch <kata_kunci>`";
+  }
+
+  if (has("gambar", "image", "foto", "carikan gambar", "cari gambar")) {
+    return "🖼️ Untuk gambar, pakai fitur bot:\nGunakan: `!gambar <kata_kunci>`";
+  }
+
+  if (has("stiker", "sticker", "jadi stiker", "buat stiker")) {
+    return "🧩 Untuk bikin stiker, reply gambar/video lalu kirim: `!stiker`";
+  }
+
+  if (has("toimg", "ubah stiker", "stiker ke gambar", "convert stiker")) {
+    return "🔄 Untuk ubah stiker ke gambar, reply stikernya lalu kirim: `!toimg`";
+  }
+
+  if (has("tts", "voice note", "suara", "text to speech")) {
+    return "🎙️ Untuk voice note dari teks, pakai: `!suara <teks>`";
+  }
+
+  if (has("status bot", "cek status", "ping bot", "latency bot")) {
+    return "📊 Untuk cek status bot, gunakan: `!status` atau `!ping`";
+  }
+
+  if (has("fitur bot", "menu bot", "help bot", "daftar command")) {
+    return "📌 Untuk lihat semua fitur, gunakan: `!menu` atau `!help`";
+  }
+
+  return null;
 }
 
 function isValidImageBuffer(buffer) {
@@ -104,6 +313,47 @@ function isValidImageBuffer(buffer) {
   return false;
 }
 
+async function safeDeleteFile(filePath) {
+  if (!filePath) return;
+
+  try {
+    await fs.promises.unlink(filePath);
+    logInfo(`TMP CLEANED | ${filePath}`);
+  } catch (err) {
+    if (err?.code === "ENOENT") return;
+    logWarn(`TMP CLEANUP FAILED | ${filePath} | ${err?.message || err}`);
+  }
+}
+
+function getErrorMessage(err) {
+  if (!err) return "unknown error";
+  if (typeof err === "string") return err;
+  if (err?.message) return err.message;
+  if (err?.response?.data?.message) return String(err.response.data.message);
+  return String(err);
+}
+
+function logCommandResult({
+  command = "unknown",
+  sender = "unknown",
+  jid = "unknown",
+  status = "OK",
+  reason = "-",
+  durationMs = 0
+}) {
+  const senderNum = String(sender).split("@")[0];
+  const scope = String(jid).endsWith("@g.us") ? "GROUP" : "PRIVATE";
+  const safeReason = String(reason || "-").replace(/\s+/g, " ").trim();
+  const line =
+    `CMD ${status} | ${command} | user=${senderNum} | ${scope} | ${durationMs}ms | ${safeReason}`;
+
+  if (status === "OK") {
+    logInfo(line);
+  } else {
+    logWarn(line);
+  }
+}
+
 /* ===============================
    TTS COOLDOWN
 ================================ */
@@ -117,25 +367,106 @@ const TTS_DELAY = 15_000; // 15 detik
 export default async function handler(sock, msg) {
   const jid = msg?.key?.remoteJid || "unknown";
   const sender = msg?.key?.participant || msg?.key?.remoteJid || "unknown";
+  const text = getText(msg)?.trim();
 
   try {
-    const text = getText(msg)?.trim();
     if (!text) return;
 
 
 
-logInfo(
-  `CMD from ${sender.split("@")[0]} | ${jid.endsWith("@g.us") ? "GROUP" : "PRIVATE"} | ${text}`
-);
+    logInfo(
+      `CMD from ${sender.split("@")[0]} | ${jid.endsWith("@g.us") ? "GROUP" : "PRIVATE"} | ${text}`
+    );
 
-
-    // ⛔ anti loop
-    if (msg.key.fromMe && !msg.key.remoteJid.endsWith("@g.us")) return;
+    // ⛔ anti loop: abaikan pesan otomatis bot sendiri (ber-footer),
+    // tapi izinkan command fromMe di private/grup
+    if (msg.key.fromMe && text.includes(BOT_FOOTER)) return;
 
 
     /* ===============================
-       1️⃣ HANDLE YTSEARCH NUMBER REPLY
+       1️⃣ HANDLE YT CHOICE + YTSEARCH NUMBER REPLY
     ================================ */
+    if (/^[1-2]$/.test(text)) {
+      const ytChoice = ytChoiceCache.get(sender);
+      if (ytChoice) {
+        const expired = Date.now() - ytChoice.createdAt > YT_CHOICE_TTL_MS;
+        if (expired) {
+          ytChoiceCache.delete(sender);
+          return reply(sock, msg, "⌛ Pilihan !yt sudah kadaluarsa. Kirim ulang `!yt <link>`.");
+        }
+
+        ytChoiceCache.delete(sender);
+
+        if (text === "1") {
+          await reply(sock, msg, "🎧 Mengambil audio (MP3)...");
+          try {
+            const audioPath = await downloadYouTubeAudio(ytChoice.url);
+            await reply(sock, msg, {
+              audio: { url: audioPath },
+              mimetype: "audio/mpeg"
+            });
+            await safeDeleteFile(audioPath);
+            logCommandResult({
+              command: "yt-choice-audio",
+              sender,
+              jid,
+              status: "OK",
+              reason: "audio terkirim",
+              durationMs: 0
+            });
+            return;
+          } catch (err) {
+            logCommandResult({
+              command: "yt-choice-audio",
+              sender,
+              jid,
+              status: "FAIL",
+              reason: getErrorMessage(err),
+              durationMs: 0
+            });
+            return reply(
+              sock,
+              msg,
+              typeof err === "string" ? `❌ ${err}` : "❌ Gagal mengambil audio."
+            );
+          }
+        }
+
+        await reply(sock, msg, "🎬 Mengambil video (MP4)...");
+        try {
+          const videoPath = await downloadYouTubeVideo(ytChoice.url);
+          await reply(sock, msg, {
+            video: { url: videoPath },
+            caption: "🎬 Berhasil mengunduh video."
+          });
+          await safeDeleteFile(videoPath);
+          logCommandResult({
+            command: "yt-choice-video",
+            sender,
+            jid,
+            status: "OK",
+            reason: "video terkirim",
+            durationMs: 0
+          });
+          return;
+        } catch (err) {
+          logCommandResult({
+            command: "yt-choice-video",
+            sender,
+            jid,
+            status: "FAIL",
+            reason: getErrorMessage(err),
+            durationMs: 0
+          });
+          return reply(
+            sock,
+            msg,
+            typeof err === "string" ? `❌ ${err}` : "❌ Gagal mengambil video."
+          );
+        }
+      }
+    }
+
     if (/^[1-5]$/.test(text)) {
       const cache = ytSearchCache.get(sender);
       if (!cache) return;
@@ -148,13 +479,36 @@ logInfo(
       await reply(sock, msg, `🎧 Mengambil audio:\n${selected.title}`);
 
       try {
-        const audioPath = await downloadYouTubeAudio(selected.url);
-        return reply(sock, msg, {
+        const ytUrl = normalizeYouTubeUrl(selected.url) || selected.url;
+        const audioPath = await downloadYouTubeAudio(ytUrl);
+        await reply(sock, msg, {
           audio: { url: audioPath },
           mimetype: "audio/mpeg"
         });
-      } catch {
-        return reply(sock, msg, "❌ Gagal mengambil audio.");
+        await safeDeleteFile(audioPath);
+        logCommandResult({
+          command: "ytsearch-pick",
+          sender,
+          jid,
+          status: "OK",
+          reason: "audio hasil pencarian terkirim",
+          durationMs: 0
+        });
+        return;
+      } catch (err) {
+        logCommandResult({
+          command: "ytsearch-pick",
+          sender,
+          jid,
+          status: "FAIL",
+          reason: getErrorMessage(err),
+          durationMs: 0
+        });
+        return reply(
+          sock,
+          msg,
+          typeof err === "string" ? `❌ ${err}` : "❌ Gagal mengambil audio."
+        );
       }
     }
 
@@ -166,6 +520,25 @@ logInfo(
     const args = text.slice(1).trim().split(/\s+/);
     const command = args.shift().toLowerCase();
     const input = args.join(" ");
+    const commandStartMs = Date.now();
+    const logOk = (reason) =>
+      logCommandResult({
+        command,
+        sender,
+        jid,
+        status: "OK",
+        reason,
+        durationMs: Date.now() - commandStartMs
+      });
+    const logFail = (reason) =>
+      logCommandResult({
+        command,
+        sender,
+        jid,
+        status: "FAIL",
+        reason,
+        durationMs: Date.now() - commandStartMs
+      });
 
     /* ===============================
        STIKER
@@ -275,6 +648,7 @@ if (command === "stiker" || command === "sticker") {
     ================================ */
     if (command === "ytsearch") {
       if (!input) {
+        logFail("kata kunci kosong");
         return reply(sock, msg, "❗ Masukkan kata kunci");
       }
 
@@ -288,9 +662,44 @@ if (command === "stiker" || command === "sticker") {
         });
         txt += "\nBalas angka (1–5)";
 
+        logOk(`hasil=${results.length}`);
         return reply(sock, msg, txt);
-      } catch {
+      } catch (err) {
+        logFail(getErrorMessage(err));
         return reply(sock, msg, "❌ Gagal mencari YouTube.");
+      }
+    }
+
+    /* ===============================
+       YMUSIC SEARCH
+    ================================ */
+    if (command === "musik" || command === "ymusic") {
+      if (!input) {
+        logFail("query kosong");
+        return reply(sock, msg, "❗ Contoh: !musik aku ikhlas aftershine");
+      }
+
+      try {
+        const results = await searchYouTubeMusic(input);
+        ytSearchCache.set(sender, results);
+
+        let txt = "*🎵 Hasil YMusic:*\n\n";
+        results.forEach((v, i) => {
+          const dur = v.duration ? ` (${v.duration})` : "";
+          const ch = v.channel ? `\n   👤 ${v.channel}` : "";
+          txt += `${i + 1}. ${v.title}${dur}${ch}\n`;
+        });
+        txt += "\nBalas angka (1–5)";
+
+        logOk(`hasil=${results.length}`);
+        return reply(sock, msg, txt);
+      } catch (err) {
+        logFail(getErrorMessage(err));
+        return reply(
+          sock,
+          msg,
+          err?.message ? `❌ ${err.message}` : "❌ Gagal mencari lagu."
+        );
       }
     }
 
@@ -298,23 +707,29 @@ if (command === "stiker" || command === "sticker") {
        YTA (DIRECT LINK)
     ================================ */
     if (command === "yta") {
-      if (!input || !input.includes("watch?v=")) {
+      const ytUrl = normalizeYouTubeUrl(input);
+      if (!ytUrl) {
+        logFail("link youtube tidak valid");
         return reply(
           sock,
           msg,
-          "❗ Gunakan link YouTube watch?v=\nShorts tidak didukung."
+          "❗ Link YouTube tidak valid.\nContoh:\n• !yta https://www.youtube.com/watch?v=...\n• !yta https://youtu.be/..."
         );
       }
 
       await reply(sock, msg, "🎧 Mengambil audio (yt-dlp)...");
 
       try {
-        const audioPath = await downloadYouTubeAudio(input);
-        return reply(sock, msg, {
+        const audioPath = await downloadYouTubeAudio(ytUrl);
+        await reply(sock, msg, {
           audio: { url: audioPath },
           mimetype: "audio/mpeg"
         });
+        await safeDeleteFile(audioPath);
+        logOk("audio youtube terkirim");
+        return;
       } catch (err) {
+        logFail(getErrorMessage(err));
         return reply(
           sock,
           msg,
@@ -324,10 +739,38 @@ if (command === "stiker" || command === "sticker") {
     }
 
     /* ===============================
+       YT (PILIH AUDIO / VIDEO)
+    ================================ */
+    if (command === "yt") {
+      const ytUrl = normalizeYouTubeUrl(input);
+      if (!ytUrl) {
+        logFail("link youtube tidak valid");
+        return reply(
+          sock,
+          msg,
+          "❗ Link YouTube tidak valid.\nContoh:\n• !yt https://www.youtube.com/watch?v=...\n• !yt https://youtu.be/..."
+        );
+      }
+
+      ytChoiceCache.set(sender, {
+        url: ytUrl,
+        createdAt: Date.now()
+      });
+
+      logOk("menunggu pilihan format 1/2");
+      return reply(
+        sock,
+        msg,
+        "📥 *Pilih format download:*\n1. Music (MP3)\n2. Video (MP4)\n\nBalas angka *1* atau *2*."
+      );
+    }
+
+    /* ===============================
        TIKTOK
     ================================ */
     if (command === "tt") {
-      if (!input.includes("tiktok.com")) {
+      if (!/(tiktok\.com|vt\.tiktok\.com|vm\.tiktok\.com)/i.test(input)) {
+        logFail("link tiktok tidak valid");
         return reply(sock, msg, "❗ Link TikTok tidak valid");
       }
 
@@ -335,12 +778,22 @@ if (command === "stiker" || command === "sticker") {
 
       try {
         const data = await downloadTikTok(input);
-        return reply(sock, msg, {
+        await reply(sock, msg, {
           video: { url: data.video },
           caption: `🎵 ${data.title}\n👤 ${data.author}`
         });
-      } catch {
-        return reply(sock, msg, "❌ Gagal download TikTok");
+        if (typeof data?.video === "string" && fs.existsSync(data.video)) {
+          await safeDeleteFile(data.video);
+        }
+        logOk("video tiktok terkirim");
+        return;
+      } catch (err) {
+        logFail(getErrorMessage(err));
+        return reply(
+          sock,
+          msg,
+          err?.message ? `❌ ${err.message}` : "❌ Gagal download TikTok"
+        );
       }
     }
 
@@ -348,7 +801,8 @@ if (command === "stiker" || command === "sticker") {
        INSTAGRAM
     ================================ */
     if (command === "ig") {
-      if (!input.includes("instagram.com")) {
+      if (!/(instagram\.com|instagr\.am)/i.test(input)) {
+        logFail("link instagram tidak valid");
         return reply(sock, msg, "❗ Link Instagram tidak valid");
       }
 
@@ -356,65 +810,94 @@ if (command === "stiker" || command === "sticker") {
 
       try {
         const video = await downloadInstagram(input);
-        return reply(sock, msg, { video: { url: video } });
-      } catch {
-        return reply(sock, msg, "❌ Gagal download Instagram");
+        await reply(sock, msg, { video: { url: video } });
+
+        if (typeof video === "string" && fs.existsSync(video)) {
+          await safeDeleteFile(video);
+        }
+        logOk("video instagram terkirim");
+        return;
+      } catch (err) {
+        logFail(getErrorMessage(err));
+        return reply(
+          sock,
+          msg,
+          err?.message ? `❌ ${err.message}` : "❌ Gagal download Instagram"
+        );
       }
     }
 
+    /* ===============================
+       CUACA BMKG
+    ================================ */
+
 if (command === "cuaca") {
   if (!input) {
-    return reply(
-      sock,
-      msg,
-      "❗ Contoh:\n!cuaca Mugarsari Tasikmalaya\n!cuaca Tasikmalaya\n!cuaca Tasikmalaya Indonesia"
+    logFail("lokasi kosong");
+    return reply(sock, msg,
+      `❗ *Cara pakai:*\n!cuaca <nama lokasi>\n\n*Contoh:*\n• !cuaca Tawang\n• !cuaca Tasikmalaya\n• !cuaca Cipedes\n• !cuaca Bandung\n\n_Bisa pakai nama kecamatan atau kota_`
     );
   }
 
-  try {
-    const w = await getWeatherWeatherAPI(input);
+ try {
+    await reply(sock, msg, "🔍 Mencari data cuaca...");
 
-    let hourlyText = "";
-    w.hourly.forEach(h => {
-      hourlyText += `🕒 ${h.time} | ${h.icon} ${h.condition} | ${h.temp}°C | 🌧️ ${h.rainChance}%\n`;
+    const w = await getWeatherBMKG(input);
+    const s = w.cuacaSekarang;
+
+    // ✅ Definisikan jamSekarang SEBELUM dipakai
+    const jamSekarang = new Date(s.local_datetime).toLocaleTimeString("id-ID", {
+      hour: "2-digit",
+      minute: "2-digit",
+      timeZone: "Asia/Jakarta"
+    });
+
+    let prakiraan = "";
+    w.prakiraan.forEach(c => {
+      const date = new Date(c.local_datetime);
+      const jam = date.toLocaleTimeString("id-ID", {
+        hour: "2-digit",
+        minute: "2-digit",
+        timeZone: "Asia/Jakarta"
+      });
+      prakiraan += `🕒 ${jam} | ${getWeatherIcon(c.weather_desc)} ${c.weather_desc} | ${c.t}°C | 🌧️ ${c.rainChance}%\n`;
     });
 
     const text = `
-🌦️ *CUACA DETAIL*
-━━━━━━━━━━━━━━
-📍 *Lokasi:*
-${w.location}
-⏱️ *Zona Waktu:* ${w.timezone}
+🌦️ *PRAKIRAAN CUACA*
+━━━━━━━━━━━━━━━━━━
+📍 *${w.lokasi}*
+🗺️ ${w.provinsi}
 
-🌡️ *Saat ini:*
-${w.temp}°C (terasa ${w.feels}°C)
-${w.condition}
-💧 ${w.humidity}% | 💨 ${w.wind} km/jam
-🌧️ Curah hujan: ${w.rain} mm
+🌡️ *Kondisi Pukul ${jamSekarang} WIB:*
+${getWeatherIcon(s.weather_desc)} ${s.weather_desc}
+🌡️ Suhu: *${s.t}°C*
+💧 Kelembapan: ${s.hu}%
+💨 Angin: ${s.ws} km/j
 
-⏱️ *Perkiraan Beberapa Jam ke Depan*
-${hourlyText}
-━━━━━━━━━━━━━━
+⏱️ *Prakiraan Beberapa Jam ke Depan:*
+${prakiraan}
+━━━━━━━━━━━━━━━━━━
+📡 _Sumber: Tomorrow.io_
 `.trim();
 
+    logOk(`lokasi=${w.lokasi}`);
     return reply(sock, msg, text);
+
   } catch (err) {
-    return reply(
-      sock,
-      msg,
-      "❌ Lokasi tidak dikenali.\nCoba:\n• Mugarsari Tasikmalaya\n• Tasikmalaya\n• Tasikmalaya Indonesia"
+    logError("CUACA ERROR", err);
+    logFail(getErrorMessage(err));
+    return reply(sock, msg,
+      `❌ Lokasi *"${input}"* tidak ditemukan.\n\nCoba gunakan nama yang lebih umum.\n\n*Contoh:*\n• !cuaca Tawang\n• !cuaca Tasikmalaya\n• !cuaca Bandung`
     );
   }
 }
-
-
-
-
     /* ===============================
        GAMBAR (CSE)
     ================================ */
     if (command === "gambar" || command === "image") {
       if (!input) {
+        logFail("kata kunci kosong");
         return reply(
           sock,
           msg,
@@ -424,13 +907,17 @@ ${hourlyText}
 
       const { safeMode, query } = parseImageFlags(input);
       if (!query) {
+        logFail("query kosong");
         return reply(sock, msg, "❗ Kata kunci kosong.");
       }
 
       if (!safeMode) {
-        const owner = normalizeJid(process.env.OWNER_NUMBER);
-        const senderNum = normalizeJid(sender);
-        if (!msg.key.fromMe && senderNum !== owner) {
+        const ownerIds = parseOwnerIds(sock);
+        const senderIds = await getSenderIds(sock, msg);
+        const isOwner = msg.key.fromMe || senderIds.some(id => ownerIds.has(id));
+
+        if (!isOwner) {
+          logFail("akses unsafe ditolak");
           return reply(sock, msg, "🔒 Mode UNSAFE hanya untuk owner.");
         }
       }
@@ -445,6 +932,7 @@ ${hourlyText}
         const imageUrl = await searchImageCSE(query, safeMode);
         const image = await downloadImage(imageUrl);
 
+        logOk(`gambar mode=${safeMode ? "safe" : "unsafe"}`);
         return reply(sock, msg, {
           image: image.buffer,
           mimetype: image.mimetype,
@@ -452,7 +940,8 @@ ${hourlyText}
             safeMode ? "SAFE" : "UNSAFE"
           }`
         });
-      } catch {
+      } catch (err) {
+        logFail(getErrorMessage(err));
         return reply(sock, msg, "❌ Gagal menampilkan gambar.");
       }
     }
@@ -484,7 +973,27 @@ apabila ada fitur yang kurang stabil atau tidak berjalan sempurna.
 
 🧠 *AI Chat*
 • !ai <pertanyaan>
-  └ Tanya AI (OpenRouter)
+  └ Tanya AI (pakai memory + data tersimpan)
+• !ai reset
+  └ Hapus memory percakapan AI
+• !ai simpan <kunci>=<nilai>
+  └ Simpan data dari chat (hanya editor)
+• !ai data list
+  └ Lihat semua data tersimpan
+• !ai data <kunci>
+  └ Ambil data tertentu
+• !ai hapus <kunci>
+  └ Hapus data tersimpan (hanya editor)
+• !ai editor list
+  └ Lihat daftar editor data
+• !ai editor id
+  └ Lihat ID kamu (untuk didaftarkan owner)
+• !ai editor add <nomor>
+  └ Tambah editor (owner only, bisa reply/mention user)
+• !ai editor del <nomor>
+  └ Hapus editor (owner only)
+• !ai editor clear
+  └ Hapus semua editor tambahan (owner only)
 
 🎙️ *Text to Speech*
 • !suara <teks>
@@ -504,6 +1013,8 @@ apabila ada fitur yang kurang stabil atau tidak berjalan sempurna.
 
 
 🎧 YouTube
+• !yt <watch url>
+• !musik <query>
 • !yta <watch url>
 • !ytsearch <query>
 
@@ -540,6 +1051,7 @@ apabila ada fitur yang kurang stabil atau tidak berjalan sempurna.
 ✅ *Status Bot:* Aktif
 `.trim();
 
+      logOk("menu terkirim");
       return reply(sock, msg, menuText);
     }
 
@@ -548,17 +1060,405 @@ apabila ada fitur yang kurang stabil atau tidak berjalan sempurna.
     ================================ */
 if (command === "ai") {
   if (!input) {
-    return reply(sock, msg, "❗ !ai <pertanyaan>");
+    logFail("input ai kosong");
+    return reply(
+      sock,
+      msg,
+      "❗ !ai <pertanyaan>\n🧹 !ai reset\n💾 !ai simpan <kunci>=<nilai>\n📚 !ai data list"
+    );
   }
 
-  const { content, model } = await askAI(input);
+  const conversationId = getAIConversationId(jid, sender);
+  const knowledgeScopeId = getAIKnowledgeScopeId(jid);
+  const ownerIds = parseOwnerIds(sock);
+  const senderIds = await getSenderIds(sock, msg);
+  const isOwner = msg.key.fromMe || senderIds.some(id => ownerIds.has(id));
+  const canEditKnowledge = isOwner || hasKnowledgeEditAccess(senderIds);
+  const ownerNum = Array.from(ownerIds)[0] || "";
+  const senderNum = senderIds[0] || normalizeJid(sender);
+  const aiInput = input.trim();
+  const aiCmd = aiInput.toLowerCase();
+
+  if (aiCmd === "reset" || aiCmd === "clear") {
+    const prevTurns = Math.ceil(getAIHistorySize(conversationId) / 2);
+    clearAIHistory(conversationId);
+    logOk(`ai reset, turn=${prevTurns}`);
+    return reply(sock, msg, `🧹 Memory percakapan AI direset (${prevTurns} turn dihapus).`);
+  }
+
+  if (aiCmd === "editor list" || aiCmd === "list editor") {
+    const editors = listKnowledgeEditors();
+    const lines = [
+      `owner: ${Array.from(ownerIds).join(", ") || "-"}`,
+      ...editors.map((id, idx) => `${idx + 1}. ${id}`)
+    ].join("\n");
+
+    logOk("ai editor list");
+    return reply(
+      sock,
+      msg,
+      `👥 *Editor Data Knowledge*\n${lines}${editors.length === 0 ? "\n(belum ada editor tambahan)" : ""}`
+    );
+  }
+
+  if (aiCmd === "editor id" || aiCmd === "my id" || aiCmd === "whoami") {
+    logOk("ai editor id");
+    return reply(
+      sock,
+      msg,
+      `🆔 ID kamu terdeteksi:\n${senderIds.length ? senderIds.map((id, i) => `${i + 1}. ${id}`).join("\n") : "-"}\n\nMinta owner tambah salah satu ID ini:\n\`!ai editor add <id>\``
+    );
+  }
+
+  if (aiCmd === "editor clear" || aiCmd === "editor reset") {
+    if (!isOwner) {
+      logFail("editor clear ditolak: bukan owner");
+      return reply(
+        sock,
+        msg,
+        `🔒 Hanya owner yang bisa reset editor.\nID kamu terdeteksi: ${senderNum || "-"}`
+      );
+    }
+
+    const removedCount = clearKnowledgeEditors();
+    appendKnowledgeAudit({
+      action: "editor_clear",
+      actor: senderIds,
+      removedCount
+    });
+
+    logOk(`ai editor clear, removed=${removedCount}`);
+    return reply(sock, msg, `✅ Semua editor tambahan dihapus (${removedCount} akun).`);
+  }
+
+  if (
+    aiCmd === "editor add" ||
+    aiCmd === "editor tambah" ||
+    aiCmd.startsWith("editor add ") ||
+    aiCmd.startsWith("editor tambah ")
+  ) {
+    if (!isOwner) {
+      logFail("editor add ditolak: bukan owner");
+      return reply(
+        sock,
+        msg,
+        `🔒 Hanya owner yang bisa menambah editor.\nID kamu terdeteksi: ${senderNum || "-"}`
+      );
+    }
+
+    const raw = aiInput.replace(/^editor\s+(add|tambah)\s+/i, "").trim();
+    const fromText = raw
+      .split(/[,\s]+/)
+      .map(normalizeJid)
+      .filter(Boolean);
+    const fromCtx = getMentionedOrQuotedIds(msg);
+    const candidateIds = Array.from(new Set([...fromText, ...fromCtx]));
+
+    if (!candidateIds.length) {
+      logFail("editor add gagal: kandidat kosong");
+      return reply(
+        sock,
+        msg,
+        "❗ Nomor/ID editor tidak valid.\nContoh: !ai editor add 6281234567890\nAtau reply pesan user lalu kirim: !ai editor add"
+      );
+    }
+
+    const added = [];
+    const skippedOwner = [];
+    const already = [];
+
+    for (const candidate of candidateIds) {
+      const variants = getIdVariants(candidate);
+      let wasAdded = false;
+      let isOwnerVariant = false;
+
+      for (const variant of variants) {
+        if (!variant || variant.length < 8) continue;
+        if (ownerIds.has(variant)) {
+          isOwnerVariant = true;
+          continue;
+        }
+
+        const result = addKnowledgeEditor(variant);
+        if (result.added) {
+          added.push(variant);
+          wasAdded = true;
+        } else {
+          already.push(variant);
+        }
+      }
+
+      if (isOwnerVariant && !wasAdded) {
+        skippedOwner.push(candidate);
+      }
+    }
+
+    if (!added.length && !already.length) {
+      logFail("editor add gagal: tidak ada id valid");
+      return reply(sock, msg, "❌ Tidak ada ID editor valid yang bisa ditambahkan.");
+    }
+
+    const parts = [];
+    if (added.length) parts.push(`✅ Ditambahkan:\n${Array.from(new Set(added)).join("\n")}`);
+    if (already.length) parts.push(`ℹ️ Sudah terdaftar:\n${Array.from(new Set(already)).join("\n")}`);
+    if (skippedOwner.length) parts.push("ℹ️ ID owner dilewati (owner otomatis punya akses).");
+
+    appendKnowledgeAudit({
+      action: "editor_add",
+      actor: senderIds,
+      input: candidateIds,
+      added: Array.from(new Set(added)),
+      already: Array.from(new Set(already)),
+      skippedOwner: skippedOwner.length
+    });
+
+    logOk(`ai editor add, added=${Array.from(new Set(added)).length}`);
+    return reply(
+      sock,
+      msg,
+      parts.join("\n\n")
+    );
+  }
+
+  if (
+    aiCmd === "editor del" ||
+    aiCmd === "editor delete" ||
+    aiCmd === "editor hapus" ||
+    aiCmd.startsWith("editor del ") ||
+    aiCmd.startsWith("editor delete ") ||
+    aiCmd.startsWith("editor hapus ")
+  ) {
+    if (!isOwner) {
+      logFail("editor del ditolak: bukan owner");
+      return reply(
+        sock,
+        msg,
+        `🔒 Hanya owner yang bisa menghapus editor.\nID kamu terdeteksi: ${senderNum || "-"}`
+      );
+    }
+
+    const raw = aiInput.replace(/^editor\s+(del|delete|hapus)\s+/i, "").trim();
+    const fromText = raw
+      .split(/[,\s]+/)
+      .map(normalizeJid)
+      .filter(Boolean);
+    const fromCtx = getMentionedOrQuotedIds(msg);
+    const candidateIds = Array.from(new Set([...fromText, ...fromCtx]));
+
+    if (!candidateIds.length) {
+      logFail("editor del gagal: kandidat kosong");
+      return reply(
+        sock,
+        msg,
+        "❗ Nomor/ID editor tidak valid.\nContoh: !ai editor del 6281234567890\nAtau reply pesan user lalu kirim: !ai editor del"
+      );
+    }
+
+    const removedList = [];
+    const notFoundList = [];
+
+    for (const candidate of candidateIds) {
+      const variants = getIdVariants(candidate);
+      let removedAny = false;
+      let hasOwnerVariant = false;
+
+      for (const variant of variants) {
+        if (!variant || variant.length < 8) continue;
+        if (ownerIds.has(variant)) {
+          hasOwnerVariant = true;
+          continue;
+        }
+
+        const removed = removeKnowledgeEditor(variant);
+        if (removed) {
+          removedList.push(variant);
+          removedAny = true;
+        } else {
+          notFoundList.push(variant);
+        }
+      }
+
+      if (hasOwnerVariant && !removedAny) {
+        logFail("editor del ditolak: target owner");
+        return reply(sock, msg, "❌ Owner tidak bisa dihapus dari akses editor.");
+      }
+    }
+
+    const parts = [];
+    if (removedList.length) parts.push(`🗑️ Dihapus:\n${Array.from(new Set(removedList)).join("\n")}`);
+    if (notFoundList.length) parts.push(`❌ Tidak ditemukan:\n${Array.from(new Set(notFoundList)).join("\n")}`);
+
+    if (!parts.length) {
+      logFail("editor del gagal: tidak ada perubahan");
+      return reply(sock, msg, "❌ Tidak ada ID editor yang diproses.");
+    }
+
+    appendKnowledgeAudit({
+      action: "editor_del",
+      actor: senderIds,
+      input: candidateIds,
+      removed: Array.from(new Set(removedList)),
+      notFound: Array.from(new Set(notFoundList))
+    });
+
+    logOk(`ai editor del, removed=${Array.from(new Set(removedList)).length}`);
+    return reply(
+      sock,
+      msg,
+      parts.join("\n\n")
+    );
+  }
+
+  if (aiCmd === "data list" || aiCmd === "list data") {
+    const facts = listStoredFacts(knowledgeScopeId);
+    if (!facts.length) {
+      logFail("data list kosong");
+      return reply(sock, msg, "📚 Belum ada data tersimpan di chat ini.");
+    }
+
+    const lines = facts
+      .slice(0, 30)
+      .map((item, idx) => `${idx + 1}. ${item.key} = ${item.value}`)
+      .join("\n");
+
+    logOk(`ai data list, total=${facts.length}`);
+    return reply(
+      sock,
+      msg,
+      `📚 *Data Tersimpan (${facts.length})*\n${lines}${facts.length > 30 ? "\n..." : ""}`
+    );
+  }
+
+  if (aiCmd.startsWith("simpan ") || aiCmd.startsWith("save ") || aiCmd.startsWith("ingat ")) {
+    if (!canEditKnowledge) {
+      logFail("simpan data ditolak: tanpa akses");
+      return reply(
+        sock,
+        msg,
+        `🔒 Hanya owner atau editor terdaftar yang bisa mengubah data.\nID kamu terdeteksi: ${senderIds.join(", ") || "-"}\nMinta owner pakai: !ai editor add <id>`
+      );
+    }
+
+    const payload = aiInput.replace(/^(simpan|save|ingat)\s+/i, "").trim();
+    const eqIndex = payload.indexOf("=");
+    const colonIndex = payload.indexOf(":");
+    let cutIndex = -1;
+
+    if (eqIndex > 0 && colonIndex > 0) cutIndex = Math.min(eqIndex, colonIndex);
+    else if (eqIndex > 0) cutIndex = eqIndex;
+    else if (colonIndex > 0) cutIndex = colonIndex;
+
+    if (cutIndex < 1) {
+      logFail("simpan data gagal: format salah");
+      return reply(sock, msg, "❗ Format salah.\nContoh: !ai simpan alamat kantor=Jl. Merdeka 10");
+    }
+
+    const key = payload.slice(0, cutIndex).trim();
+    const value = payload.slice(cutIndex + 1).trim();
+
+    if (!key || !value) {
+      logFail("simpan data gagal: key/value kosong");
+      return reply(sock, msg, "❗ Kunci atau nilai kosong.");
+    }
+
+    setStoredFact(knowledgeScopeId, key, value);
+    appendKnowledgeAudit({
+      action: "data_set",
+      actor: senderIds,
+      scope: knowledgeScopeId,
+      key: key.toLowerCase(),
+      value
+    });
+    logOk(`ai simpan key=${key.toLowerCase()}`);
+    return reply(sock, msg, `✅ Data disimpan:\n*${key.toLowerCase()}* = ${value}`);
+  }
+
+  if (aiCmd.startsWith("hapus ") || aiCmd.startsWith("delete ") || aiCmd.startsWith("del ")) {
+    if (!canEditKnowledge) {
+      logFail("hapus data ditolak: tanpa akses");
+      return reply(
+        sock,
+        msg,
+        `🔒 Hanya owner atau editor terdaftar yang bisa mengubah data.\nID kamu terdeteksi: ${senderIds.join(", ") || "-"}\nMinta owner pakai: !ai editor add <id>`
+      );
+    }
+
+    const key = aiInput.replace(/^(hapus|delete|del)\s+/i, "").trim();
+    if (!key) {
+      logFail("hapus data gagal: key kosong");
+      return reply(sock, msg, "❗ Contoh: !ai hapus alamat kantor");
+    }
+
+    const deleted = deleteStoredFact(knowledgeScopeId, key);
+    appendKnowledgeAudit({
+      action: "data_del",
+      actor: senderIds,
+      scope: knowledgeScopeId,
+      key: key.toLowerCase(),
+      deleted
+    });
+    logOk(`ai hapus key=${key.toLowerCase()} deleted=${deleted}`);
+    return reply(
+      sock,
+      msg,
+      deleted
+        ? `🗑️ Data *${key.toLowerCase()}* dihapus.`
+        : `❌ Data *${key.toLowerCase()}* tidak ditemukan.`
+    );
+  }
+
+  if (aiCmd.startsWith("data ")) {
+    const key = aiInput.replace(/^data\s+/i, "").trim();
+    if (!key || key.toLowerCase() === "list") {
+      const facts = listStoredFacts(knowledgeScopeId);
+      if (!facts.length) {
+        logFail("ai data list kosong");
+        return reply(sock, msg, "📚 Belum ada data tersimpan di chat ini.");
+      }
+
+      const lines = facts
+        .slice(0, 30)
+        .map((item, idx) => `${idx + 1}. ${item.key} = ${item.value}`)
+        .join("\n");
+
+      logOk(`ai data list, total=${facts.length}`);
+      return reply(
+        sock,
+        msg,
+        `📚 *Data Tersimpan (${facts.length})*\n${lines}${facts.length > 30 ? "\n..." : ""}`
+      );
+    }
+
+    const value = getStoredFact(knowledgeScopeId, key);
+    if (!value) {
+      logFail(`ai data key tidak ditemukan: ${key.toLowerCase()}`);
+      return reply(sock, msg, `❌ Data *${key.toLowerCase()}* tidak ditemukan.`);
+    }
+
+    logOk(`ai data key=${key.toLowerCase()}`);
+    return reply(sock, msg, `📌 *${key.toLowerCase()}* = ${value}`);
+  }
+
+  const featureRedirect = getFeatureRedirect(aiInput);
+  if (featureRedirect) {
+    logOk("ai redirect ke fitur bot");
+    return reply(sock, msg, featureRedirect);
+  }
+
+  const knowledgeContext = buildFactsContext(knowledgeScopeId, aiInput, 8, 1200);
+  const { content, model, historySize } = await askAI(aiInput, conversationId, {
+    knowledgeContext
+  });
+  const turns = Math.ceil(historySize / 2);
 
   const text = `
-🤖 Model: *Gemini-3-flash*
-━━━━━━━━━━━━━━━━━━━
+🤖 Model: *${model}*
+🧠 Memory: *${turns} turn*
+━━━━━━━━━━━━━━━━━━
 ${content}
 `.trim();
 
+  logOk(`ai response model=${model}`);
   return reply(sock, msg, text);
 }
 
@@ -568,10 +1468,12 @@ ${content}
     // google TTS
 if (command === "suara") {
   if (!input) {
+    logFail("teks tts kosong");
     return reply(sock, msg, "❗ !suara <teks>");
   }
 
   if (input.length > 250) {
+    logFail("teks tts melebihi 250 karakter");
     return reply(sock, msg, "❗ Maksimal 250 karakter.");
   }
 
@@ -580,6 +1482,7 @@ if (command === "suara") {
   const remaining = TTS_DELAY - (now - last);
 
   if (remaining > 0) {
+    logFail(`tts cooldown ${Math.ceil(remaining / 1000)}s`);
     return reply(
       sock,
       msg,
@@ -593,6 +1496,7 @@ if (command === "suara") {
 
     const audio = await tts(input);
 
+    logOk("tts voice note terkirim");
     return reply(sock, msg, {
       audio,
       mimetype: "audio/ogg; codecs=opus",
@@ -602,6 +1506,7 @@ if (command === "suara") {
   } catch (err) {
     ttsCooldown.delete(sender);
     logError("TTS ERROR", err);
+    logFail(getErrorMessage(err));
     return reply(sock, msg, "❌ Gagal membuat suara.");
   }
 }
@@ -610,8 +1515,14 @@ if (command === "suara") {
     /* ===============================
        TAG
     ================================ */
-    if (command === "tagall") return tagAll(sock, msg, input);
-    if (command === "tagadmin") return tagAdmin(sock, msg, input);
+    if (command === "tagall") {
+      logOk("tagall dipanggil");
+      return tagAll(sock, msg, input);
+    }
+    if (command === "tagadmin") {
+      logOk("tagadmin dipanggil");
+      return tagAdmin(sock, msg, input);
+    }
 
     /* ===============================
        STATUS / PING
@@ -637,9 +1548,22 @@ if (command === "suara") {
 ━━━━━━━━━━━━━━
 `.trim();
 
+      logOk(`status ping=${ping}ms net=${netLatency ? `${netLatency}ms` : "off"}`);
       return reply(sock, msg, textStatus);
     }
+    logFail("command tidak dikenali");
  } catch (err) {
+  if (typeof text === "string" && text.startsWith("!")) {
+    const rawCmd = text.slice(1).trim().split(/\s+/)[0] || "unknown";
+    logCommandResult({
+      command: rawCmd.toLowerCase(),
+      sender,
+      jid,
+      status: "FAIL",
+      reason: getErrorMessage(err),
+      durationMs: 0
+    });
+  }
   logError(
     `HANDLER FAIL | user=${String(sender).split("@")[0]} | cmd=${text || "-"}`,
     err

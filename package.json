@@ -12,6 +12,8 @@
   "description": "",
   "dependencies": {
     "@whiskeysockets/baileys": "^7.0.0-rc.9",
+    "axios": "^1.15.2",
+    "bmkg-wrapper": "^2.0.1",
     "dotenv": "^17.2.3",
     "ffmpeg-static": "^5.3.0",
     "fluent-ffmpeg": "^2.1.3",
