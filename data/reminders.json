@@ -1,0 +1,62 @@
+[
+  {
+    "id": "uoxhh",
+    "jid": "120363421945585941@g.us",
+    "time": "08:35",
+    "message": "Sistem Informasi, bangun woi",
+    "enabled": true,
+    "createdAt": 1776878929992,
+    "createdBy": "99179921686567",
+    "lastTriggeredDate": "2026-04-24"
+  },
+  {
+    "id": "q4kc2",
+    "jid": "120363421945585941@g.us",
+    "time": "07:00",
+    "message": "selamat pagi dunia, owner nya keknya belum bangun nih",
+    "enabled": true,
+    "createdAt": 1776884780492,
+    "createdBy": "99179921686567",
+    "lastTriggeredDate": "2026-04-24"
+  },
+  {
+    "id": "b9jul",
+    "jid": "120363421945585941@g.us",
+    "time": "08:44",
+    "message": "BANGUN SAYANG SAATNYA SARAPAN",
+    "enabled": true,
+    "createdAt": 1776908584877,
+    "createdBy": "99179921686567",
+    "lastTriggeredDate": "2026-04-24"
+  },
+  {
+    "id": "4jnu4",
+    "jid": "120363328477124938@g.us",
+    "time": "10:42",
+    "message": "tessss",
+    "enabled": true,
+    "createdAt": 1776915688287,
+    "createdBy": "175351116353700",
+    "lastTriggeredDate": "2026-04-25"
+  },
+  {
+    "id": "34jlw",
+    "jid": "120363328477124938@g.us",
+    "time": "13:27",
+    "message": "ukul 2",
+    "enabled": true,
+    "createdAt": 1776926571860,
+    "createdBy": "175351116353700",
+    "lastTriggeredDate": "2026-04-25"
+  },
+  {
+    "id": "7indl",
+    "jid": "120363328477124938@g.us",
+    "time": "13:44",
+    "message": "pukul 2",
+    "enabled": true,
+    "createdAt": 1776926587917,
+    "createdBy": "175351116353700",
+    "lastTriggeredDate": "2026-04-25"
+  }
+]

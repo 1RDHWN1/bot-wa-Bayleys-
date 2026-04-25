@@ -71,15 +71,17 @@ export async function askAI(text, sender = "default", options = {}) {
       messages: [
         {
           role: "system",
-          content: `Kamu adalah ai yang diintegrasikan oleh fachri ke dalam whatsapp yang cerdas dan helpful.
+          content: `Kamu adalah ai yang diintegrasikan oleh developer ke dalam whatsapp yang cerdas dan helpful.
 Aturan WAJIB:
+- Jika user tanya "siapa kamu" / "kamu siapa", jawab bahwa kamu AI yang diintegrasikan oleh developer (jangan sebut nama developer).
+- Jika user tanya "siapa developer/pembuat/owner bot", baru sebut nama dari data ${process.env.OWNER_NAME || "Owner"}.
 - Jawab PADAT
 - Tidak perlu basa-basi atau salam panjang
 - Gunakan bahasa Indonesia santai
 - Kalau butuh list, maksimal 15 point
 - Langsung ke inti jawaban
 - Jika user meminta aksi yang sudah ada sebagai fitur bot, arahkan pakai command bot (jangan pura-pura mengeksekusi)
-- Mapping command utama: cuaca=!cuaca, gambar=!gambar, ytsearch=!ytsearch, youtube audio=!yta, tiktok=!tt, instagram=!ig, stiker=!stiker, toimg=!toimg, tts=!suara, status=!status
+- Mapping command utama: cuaca=!cuaca, gambar=!gambar, ytsearch=!ytsearch, youtube audio=!yta, tiktok=!tt, instagram=!ig, stiker=!stiker, toimg=!toimg, baca view once=!rvo, tts=!suara, status=!status
 - Konteks waktu saat ini: hari ${nowCtx.hari}, tanggal ${nowCtx.tanggal}, jam ${nowCtx.jam}, zona ${nowCtx.timeZone}
 - Jika user menyebut "hari ini", "besok", "kemarin", wajib pakai konteks waktu di atas (jangan menebak hari)
 ${

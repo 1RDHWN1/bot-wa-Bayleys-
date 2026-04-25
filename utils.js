@@ -70,12 +70,49 @@ export function getWeatherIcon(desc = "") {
   return "🌡️";
 }
 
-export async function getWeatherBMKG(query) {
-  // Step 1: Geocoding via Nominatim
+const weatherCache = new Map();
+
+function getWeatherCacheTtlMs() {
+  const sec = Number(process.env.WEATHER_CACHE_TTL_SEC || 300);
+  if (!Number.isFinite(sec) || sec <= 0) return 300_000;
+  return Math.floor(sec * 1000);
+}
+
+function normalizeWeatherQuery(query = "") {
+  return String(query || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+}
+
+function cloneJson(obj) {
+  return JSON.parse(JSON.stringify(obj));
+}
+
+function pruneWeatherCache(ttlMs = getWeatherCacheTtlMs()) {
+  const now = Date.now();
+  const maxKeys = Number(process.env.WEATHER_CACHE_MAX_KEYS || 300);
+
+  for (const [key, entry] of weatherCache.entries()) {
+    if (!entry?.at || now - entry.at > ttlMs) {
+      weatherCache.delete(key);
+    }
+  }
+
+  if (weatherCache.size <= maxKeys) return;
+
+  const sorted = Array.from(weatherCache.entries()).sort((a, b) => a[1].at - b[1].at);
+  const removeCount = weatherCache.size - maxKeys;
+  for (let i = 0; i < removeCount; i += 1) {
+    weatherCache.delete(sorted[i][0]);
+  }
+}
+
+async function geocodeIndonesia(query) {
   const geoRes = await axios.get(
     "https://nominatim.openstreetmap.org/search",
     {
-      params: { q: query + ", Indonesia", format: "json", limit: 1 },
+      params: { q: `${query}, Indonesia`, format: "json", limit: 1 },
       headers: { "User-Agent": "BotWA/1.0" },
       timeout: 8000
     }
@@ -86,6 +123,48 @@ export async function getWeatherBMKG(query) {
   }
 
   const { lat, lon, display_name } = geoRes.data[0];
+  return { lat, lon, display_name };
+}
+
+function pickProvinsiFromDisplayName(displayName = "") {
+  const lokasiParts = String(displayName).split(", ");
+  const skipWords = [
+    "jawa",
+    "sumatera",
+    "kalimantan",
+    "sulawesi",
+    "papua",
+    "indonesia",
+    "bali",
+    "nusa tenggara"
+  ];
+  const provinsi = [...lokasiParts].reverse().find(p =>
+    !skipWords.includes(String(p).toLowerCase())
+  ) || "Indonesia";
+
+  return {
+    lokasi: lokasiParts.slice(0, 3).join(", "),
+    kotkab: lokasiParts[2] || "",
+    provinsi
+  };
+}
+
+export async function getWeatherBMKG(query) {
+  const cacheKey = normalizeWeatherQuery(query);
+  const ttlMs = getWeatherCacheTtlMs();
+  const now = Date.now();
+  pruneWeatherCache(ttlMs);
+
+  const cached = weatherCache.get(cacheKey);
+  if (cached && now - cached.at <= ttlMs) {
+    const ageSec = Math.floor((now - cached.at) / 1000);
+    return {
+      ...cloneJson(cached.data),
+      _cache: { hit: true, ageSec, ttlSec: Math.floor(ttlMs / 1000) }
+    };
+  }
+
+  const { lat, lon, display_name } = await geocodeIndonesia(query);
 
   // Step 2: Cuaca dari Tomorrow.io
   const apiKey = process.env.TOMORROW_API_KEY;
@@ -113,21 +192,101 @@ export async function getWeatherBMKG(query) {
     rainChance: Math.round(h.values.precipitationProbability)
   }));
 
-// Ambil provinsi yang benar — skip "Jawa" (pulau) dan "Indonesia"
-  const lokasiParts = display_name.split(", ");
-  const skipWords = ["jawa", "sumatera", "kalimantan", "sulawesi", "papua", "indonesia", "bali", "nusa tenggara"];
-  const provinsi = [...lokasiParts].reverse().find(p =>
-    !skipWords.includes(p.toLowerCase())
-  ) || "Indonesia";
+  const { lokasi, kotkab, provinsi } = pickProvinsiFromDisplayName(display_name);
 
-  return {
-    lokasi: lokasiParts.slice(0, 3).join(", "),
-    kotkab: lokasiParts[2] || "",
+  const result = {
+    lokasi,
+    kotkab,
     provinsi,
     cuacaSekarang: prakiraan[0],
     prakiraan
   };
 
+  weatherCache.set(cacheKey, {
+    at: now,
+    data: cloneJson(result)
+  });
+
+  return {
+    ...result,
+    _cache: { hit: false, ageSec: 0, ttlSec: Math.floor(ttlMs / 1000) }
+  };
+
+}
+
+export async function getWeatherTomorrow(query) {
+  const cacheKey = `tomorrow:${normalizeWeatherQuery(query)}`;
+  const ttlMs = getWeatherCacheTtlMs();
+  const now = Date.now();
+  pruneWeatherCache(ttlMs);
+
+  const cached = weatherCache.get(cacheKey);
+  if (cached && now - cached.at <= ttlMs) {
+    const ageSec = Math.floor((now - cached.at) / 1000);
+    return {
+      ...cloneJson(cached.data),
+      _cache: { hit: true, ageSec, ttlSec: Math.floor(ttlMs / 1000) }
+    };
+  }
+
+  const { lat, lon, display_name } = await geocodeIndonesia(query);
+  const apiKey = process.env.TOMORROW_API_KEY;
+  const cuacaRes = await axios.get(
+    "https://api.tomorrow.io/v4/weather/forecast",
+    {
+      params: {
+        location: `${lat},${lon}`,
+        apikey: apiKey,
+        timesteps: "1d",
+        units: "metric",
+        timezone: "Asia/Jakarta"
+      },
+      timeout: 8000
+    }
+  );
+
+  const daily = Array.isArray(cuacaRes?.data?.timelines?.daily)
+    ? cuacaRes.data.timelines.daily
+    : [];
+
+  if (!daily.length) {
+    throw new Error("Data prakiraan besok belum tersedia.");
+  }
+
+  const day = daily[1] || daily[0];
+  const v = day?.values || {};
+  const weatherCode =
+    v.weatherCodeMax ??
+    v.weatherCodeFullDay ??
+    v.weatherCode ??
+    v.weatherCodeMin ??
+    1102;
+
+  const desc = tomorrowCodeToDesc(weatherCode);
+  const { lokasi, kotkab, provinsi } = pickProvinsiFromDisplayName(display_name);
+
+  const result = {
+    lokasi,
+    kotkab,
+    provinsi,
+    date: day?.time || null,
+    weather_desc: desc,
+    tMin: Math.round(v.temperatureMin ?? v.temperatureApparentMin ?? 0),
+    tMax: Math.round(v.temperatureMax ?? v.temperatureApparentMax ?? 0),
+    rainChance: Math.round(v.precipitationProbabilityAvg ?? v.precipitationProbabilityMax ?? 0),
+    humidityAvg: Math.round(v.humidityAvg ?? 0),
+    windAvg: Math.round(v.windSpeedAvg ?? 0)
+  };
+
+  weatherCache.set(cacheKey, {
+    at: now,
+    data: cloneJson(result)
+  });
+
+  return {
+    ...result,
+    _cache: { hit: false, ageSec: 0, ttlSec: Math.floor(ttlMs / 1000) }
+  };
 }
 
 function tomorrowCodeToDesc(code) {

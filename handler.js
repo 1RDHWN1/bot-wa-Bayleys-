@@ -5,6 +5,8 @@ import {
 
 import fs from "fs";
 import os from "os";
+import path from "path";
+import sharp from "sharp";
 
 import { makeSticker } from "./sticker.js";
 import { askAI, clearAIHistory, getAIHistorySize } from "./ai.js";
@@ -40,7 +42,8 @@ import {
   downloadYouTubeVideo,
   normalizeYouTubeUrl,
   getWeatherBMKG, 
-  getWeatherIcon
+  getWeatherIcon,
+  getWeatherTomorrow
 } from "./utils.js";
 
 
@@ -75,7 +78,233 @@ function logError(msg, err) {
 const ytSearchCache = new Map();
 const ytChoiceCache = new Map();
 const YT_CHOICE_TTL_MS = 2 * 60 * 1000;
+const YT_SEARCH_TTL_MS = 5 * 60 * 1000;
 const BOT_FOOTER = "> *pesan otomatis dari bot*";
+const BOT_STATE_FILE = path.resolve("./data/bot_state.json");
+const REMINDERS_FILE = path.resolve("./data/reminders.json");
+const MAINTENANCE_ALLOWED_COMMANDS = new Set([
+  "maintenance",
+  "help",
+  "menu",
+  "ping",
+  "status",
+  "stats",
+  "antrian",
+  "queue",
+  "jadwal"
+]);
+
+function defaultBotState() {
+  return {
+    maintenance: {
+      enabled: false,
+      enabledAt: null,
+      enabledBy: "",
+      reason: ""
+    }
+  };
+}
+
+function loadBotState() {
+  try {
+    if (!fs.existsSync(BOT_STATE_FILE)) return defaultBotState();
+    const raw = fs.readFileSync(BOT_STATE_FILE, "utf8");
+    const parsed = JSON.parse(raw);
+    return {
+      ...defaultBotState(),
+      ...parsed,
+      maintenance: {
+        ...defaultBotState().maintenance,
+        ...(parsed?.maintenance || {})
+      }
+    };
+  } catch {
+    return defaultBotState();
+  }
+}
+
+function saveBotState() {
+  try {
+    const dir = path.dirname(BOT_STATE_FILE);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(BOT_STATE_FILE, JSON.stringify(botState, null, 2), "utf8");
+  } catch (err) {
+    logWarn(`Gagal simpan bot state: ${err?.message || err}`);
+  }
+}
+
+const botState = loadBotState();
+let activeSockForJobs = null;
+
+function loadReminders() {
+  try {
+    if (!fs.existsSync(REMINDERS_FILE)) return [];
+    const raw = fs.readFileSync(REMINDERS_FILE, "utf8");
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+let reminders = loadReminders();
+
+function saveReminders() {
+  try {
+    const dir = path.dirname(REMINDERS_FILE);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(REMINDERS_FILE, JSON.stringify(reminders, null, 2), "utf8");
+  } catch (err) {
+    logWarn(`Gagal simpan reminders: ${err?.message || err}`);
+  }
+}
+
+function getJakartaNowParts() {
+  const now = new Date();
+  const date = now.toLocaleDateString("sv-SE", { timeZone: "Asia/Jakarta" });
+
+  // Pakai formatToParts agar separator jam selalu stabil ":".
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Jakarta",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false
+  }).formatToParts(now);
+  const hh = parts.find(p => p.type === "hour")?.value || "00";
+  const mm = parts.find(p => p.type === "minute")?.value || "00";
+  const time = `${hh}:${mm}`;
+
+  return { date, time };
+}
+
+function normalizeReminderTime(input = "") {
+  const v = String(input || "").trim();
+  const m = v.match(/^([01]?\d|2[0-3])[:.]([0-5]\d)$/);
+  if (!m) return null;
+  const hh = String(Number(m[1])).padStart(2, "0");
+  const mm = String(Number(m[2])).padStart(2, "0");
+  return `${hh}:${mm}`;
+}
+
+function formatReminderListItem(r) {
+  const state = r.enabled === false ? "off" : "on";
+  return `• [${r.id}] ${r.time} (${state}) - ${r.message}`;
+}
+
+async function processReminderJobs() {
+  if (!activeSockForJobs) return;
+  const { date, time } = getJakartaNowParts();
+  let changed = false;
+
+  for (const item of reminders) {
+    if (!item || item.enabled === false) continue;
+    if (!item.jid || !item.time || !item.message) continue;
+    if (item.time !== time) continue;
+    if (item.lastTriggeredDate === date) continue;
+
+    try {
+      const reminderText = addBotFooter(`⏰ *Pengingat Jadwal*\n${item.message}`);
+      const payload = { text: reminderText };
+
+      if (String(item.jid).endsWith("@g.us")) {
+        try {
+          const meta = await activeSockForJobs.groupMetadata(item.jid);
+          const mentions = Array.from(
+            new Set((meta?.participants || []).map(p => p?.id).filter(Boolean))
+          );
+          if (mentions.length) payload.mentions = mentions;
+        } catch (metaErr) {
+          logWarn(
+            `REMINDER TAGALL SKIP | id=${item.id} | gagal ambil metadata grup: ${metaErr?.message || metaErr}`
+          );
+        }
+      }
+
+      await activeSockForJobs.sendMessage(item.jid, payload);
+      item.lastTriggeredDate = date;
+      changed = true;
+      logInfo(`REMINDER SENT | id=${item.id} | jid=${item.jid} | ${date} ${time}`);
+    } catch (err) {
+      logWarn(`REMINDER FAIL | id=${item.id} | ${err?.message || err}`);
+    }
+  }
+
+  if (changed) saveReminders();
+}
+
+setInterval(() => {
+  processReminderJobs().catch(() => {});
+}, 15 * 1000).unref?.();
+
+function escapeXml(text = "") {
+  return String(text)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
+}
+
+function wrapText(text = "", maxLen = 34, maxLines = 8) {
+  const words = String(text || "").trim().split(/\s+/).filter(Boolean);
+  if (!words.length) return [];
+
+  const lines = [];
+  let line = "";
+  for (const word of words) {
+    const next = line ? `${line} ${word}` : word;
+    if (next.length <= maxLen) {
+      line = next;
+      continue;
+    }
+    if (line) lines.push(line);
+    line = word;
+    if (lines.length >= maxLines) break;
+  }
+  if (line && lines.length < maxLines) lines.push(line);
+  if (words.length && lines.length >= maxLines) {
+    lines[maxLines - 1] = `${lines[maxLines - 1].slice(0, Math.max(0, maxLen - 3))}...`;
+  }
+  return lines;
+}
+
+async function createQuoteImageBuffer(text, author = "") {
+  const cleanText = String(text || "").trim();
+  const cleanAuthor = String(author || "").trim();
+  const lines = wrapText(cleanText || "-", 34, 8);
+  const width = 1080;
+  const top = 170;
+  const lineGap = 82;
+  const height = Math.max(720, top + lines.length * lineGap + 230);
+
+  const textSvg = lines
+    .map((line, i) => {
+      const y = top + (i * lineGap);
+      return `<text x="96" y="${y}" font-size="56" font-family="Arial, sans-serif" fill="#111827">${escapeXml(line)}</text>`;
+    })
+    .join("");
+
+  const authorSvg = cleanAuthor
+    ? `<text x="96" y="${height - 88}" font-size="38" font-family="Arial, sans-serif" fill="#374151">- ${escapeXml(cleanAuthor)}</text>`
+    : "";
+
+  const svg = `
+<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#f8fafc"/>
+      <stop offset="100%" stop-color="#e2e8f0"/>
+    </linearGradient>
+  </defs>
+  <rect x="0" y="0" width="${width}" height="${height}" fill="url(#bg)"/>
+  <rect x="62" y="58" width="${width - 124}" height="${height - 116}" rx="30" fill="#ffffff"/>
+  <text x="96" y="110" font-size="74" font-family="Georgia, serif" fill="#111827">“</text>
+  ${textSvg}
+  ${authorSvg}
+</svg>`;
+
+  return sharp(Buffer.from(svg)).png().toBuffer();
+}
 
 function addBotFooter(text) {
   if (typeof text !== "string" || !text.trim()) return text;
@@ -226,6 +455,170 @@ function getMentionedOrQuotedIds(msg) {
   return Array.from(
     new Set([...mentioned, ...quoted].map(normalizeJid).filter(Boolean))
   );
+}
+
+function getBotIdSet(sock) {
+  const ids = new Set();
+  const rawIds = [sock?.user?.id, sock?.user?.lid]
+    .map(v => String(v || "").trim())
+    .filter(Boolean);
+
+  for (const raw of rawIds) {
+    ids.add(raw.toLowerCase());
+    const norm = normalizeJid(raw);
+    if (norm) ids.add(norm);
+  }
+
+  return ids;
+}
+
+function getQuotedText(quotedMessage = {}) {
+  const q =
+    quotedMessage?.ephemeralMessage?.message ||
+    quotedMessage?.viewOnceMessage?.message ||
+    quotedMessage?.viewOnceMessageV2?.message ||
+    quotedMessage?.viewOnceMessageV2Extension?.message ||
+    quotedMessage ||
+    {};
+
+  return (
+    q?.conversation ||
+    q?.extendedTextMessage?.text ||
+    q?.imageMessage?.caption ||
+    q?.videoMessage?.caption ||
+    q?.documentMessage?.caption ||
+    ""
+  );
+}
+
+function getContextInfo(msg = {}) {
+  const message = msg?.message || {};
+  const type = getContentType(message);
+  const fromType = type ? message?.[type]?.contextInfo : undefined;
+  return (
+    fromType ||
+    message?.extendedTextMessage?.contextInfo ||
+    message?.imageMessage?.contextInfo ||
+    message?.videoMessage?.contextInfo ||
+    message?.documentMessage?.contextInfo ||
+    message?.buttonsResponseMessage?.contextInfo ||
+    message?.templateButtonReplyMessage?.contextInfo ||
+    message?.listResponseMessage?.contextInfo ||
+    null
+  );
+}
+
+async function expandParticipantCandidates(sock, participants = []) {
+  const out = new Set();
+  const input = (participants || [])
+    .map(v => String(v || "").trim())
+    .filter(Boolean);
+
+  for (const raw of input) {
+    out.add(raw);
+
+    // Beberapa kasus butuh varian tanpa device suffix, contoh:
+    // 62812xxxx:17@s.whatsapp.net -> 62812xxxx@s.whatsapp.net
+    if (raw.includes(":") && raw.includes("@")) {
+      const [left, right] = raw.split("@");
+      const leftBase = left.split(":")[0];
+      if (leftBase && right) out.add(`${leftBase}@${right}`);
+    }
+
+    const num = normalizeJid(raw);
+    if (num) out.add(`${num}@s.whatsapp.net`);
+  }
+
+  const lidMapping = sock?.signalRepository?.lidMapping;
+  if (lidMapping?.getPNForLID) {
+    for (const jid of Array.from(out)) {
+      if (!jid.includes("@lid")) continue;
+      try {
+        const pnJid = await lidMapping.getPNForLID(jid);
+        const v = String(pnJid || "").trim();
+        if (v) {
+          out.add(v);
+          if (v.includes(":") && v.includes("@")) {
+            const [left, right] = v.split("@");
+            const leftBase = left.split(":")[0];
+            if (leftBase && right) out.add(`${leftBase}@${right}`);
+          }
+          const num = normalizeJid(v);
+          if (num) out.add(`${num}@s.whatsapp.net`);
+        }
+      } catch {
+        // ignore mapping lookup failures
+      }
+    }
+  }
+
+  return Array.from(out);
+}
+
+async function tryDeleteByKey(sock, jid, key) {
+  const normalizedKey = {
+    remoteJid: key?.remoteJid || jid,
+    id: key?.id,
+    ...(typeof key?.fromMe === "boolean" ? { fromMe: key.fromMe } : {}),
+    ...(key?.participant ? { participant: key.participant } : {})
+  };
+
+  let relayErr = null;
+  try {
+    await sock.relayMessage(
+      normalizedKey.remoteJid,
+      {
+        protocolMessage: {
+          key: normalizedKey,
+          type: 0
+        }
+      },
+      {}
+    );
+    return { ok: true, via: "relay" };
+  } catch (err) {
+    relayErr = err;
+  }
+
+  try {
+    await sock.sendMessage(normalizedKey.remoteJid, { delete: normalizedKey });
+    return { ok: true, via: "sendMessage" };
+  } catch (sendErr) {
+    return { ok: false, error: sendErr || relayErr || new Error("Delete gagal") };
+  }
+}
+
+async function buildAccessContext(sock, msg) {
+  const jid = msg?.key?.remoteJid || "";
+  const ownerIds = parseOwnerIds(sock);
+  const senderIds = await getSenderIds(sock, msg);
+  const isOwner = msg?.key?.fromMe || senderIds.some(id => ownerIds.has(id));
+
+  let isGroupAdmin = false;
+  if (jid.endsWith("@g.us") && !isOwner) {
+    try {
+      const metadata = await sock.groupMetadata(jid);
+      const senderRaw = getSenderRawJids(msg);
+      const senderNorm = new Set(senderIds);
+      isGroupAdmin = metadata.participants.some(p => {
+        if (!p?.admin) return false;
+        const pid = String(p.id || "");
+        if (senderRaw.includes(pid)) return true;
+        const pNorm = normalizeJid(pid);
+        return pNorm && senderNorm.has(pNorm);
+      });
+    } catch {
+      isGroupAdmin = false;
+    }
+  }
+
+  return {
+    ownerIds,
+    senderIds,
+    isOwner: Boolean(isOwner),
+    isGroupAdmin: Boolean(isGroupAdmin),
+    isPrivileged: Boolean(isOwner || isGroupAdmin)
+  };
 }
 
 function getAIConversationId(jid, sender) {
@@ -400,6 +793,7 @@ function recordCommandStats(command, status, durationMs = 0) {
 }
 
 const rateLimitStore = new Map();
+const RATE_LIMIT_PRUNE_KEEP_MS = 10 * 60 * 1000;
 
 function hitRateLimit(userKey, bucket, limit, windowMs) {
   const now = Date.now();
@@ -416,6 +810,47 @@ function hitRateLimit(userKey, bucket, limit, windowMs) {
   active.push(now);
   rateLimitStore.set(key, active);
   return { limited: false, retryMs: 0 };
+}
+
+function pruneRateLimitStore() {
+  const now = Date.now();
+  for (const [key, values] of rateLimitStore.entries()) {
+    const kept = Array.isArray(values)
+      ? values.filter(ts => now - ts < RATE_LIMIT_PRUNE_KEEP_MS)
+      : [];
+    if (!kept.length) {
+      rateLimitStore.delete(key);
+      continue;
+    }
+    rateLimitStore.set(key, kept);
+  }
+}
+
+function pruneRuntimeStats() {
+  const maxCommandEntries = Number(process.env.STATS_MAX_COMMANDS || 150);
+  if (runtimeStats.commands.size <= maxCommandEntries) return;
+
+  const sorted = Array.from(runtimeStats.commands.entries())
+    .sort((a, b) => b[1].lastAt - a[1].lastAt)
+    .slice(0, maxCommandEntries);
+  runtimeStats.commands = new Map(sorted);
+}
+
+function pruneYtCaches() {
+  const now = Date.now();
+
+  for (const [key, value] of ytChoiceCache.entries()) {
+    if (!value?.createdAt || now - value.createdAt > YT_CHOICE_TTL_MS) {
+      ytChoiceCache.delete(key);
+    }
+  }
+
+  for (const [key, value] of ytSearchCache.entries()) {
+    if (Array.isArray(value)) continue;
+    if (!value?.createdAt || now - value.createdAt > YT_SEARCH_TTL_MS) {
+      ytSearchCache.delete(key);
+    }
+  }
 }
 
 async function enforceRateLimit({
@@ -452,6 +887,7 @@ async function enforceRateLimit({
 
 const downloaderQueue = [];
 let downloaderQueueActive = false;
+let downloaderCurrentTask = null;
 
 function enqueueDownloaderTask(taskName, worker) {
   const position = (downloaderQueueActive ? 1 : 0) + downloaderQueue.length + 1;
@@ -480,6 +916,10 @@ async function processDownloaderQueue() {
   if (!task) return;
 
   downloaderQueueActive = true;
+  downloaderCurrentTask = {
+    name: task.taskName,
+    startedAt: Date.now()
+  };
   try {
     const result = await task.worker();
     task.resolveTask(result);
@@ -487,6 +927,7 @@ async function processDownloaderQueue() {
     task.rejectTask(err);
   } finally {
     downloaderQueueActive = false;
+    downloaderCurrentTask = null;
     processDownloaderQueue();
   }
 }
@@ -494,6 +935,34 @@ async function processDownloaderQueue() {
 function getDownloaderQueueSize() {
   return downloaderQueue.length + (downloaderQueueActive ? 1 : 0);
 }
+
+function getDownloaderQueueSnapshot() {
+  const waiting = downloaderQueue.length;
+  const active = downloaderCurrentTask
+    ? {
+        name: downloaderCurrentTask.name,
+        runningSec: Math.floor((Date.now() - downloaderCurrentTask.startedAt) / 1000)
+      }
+    : null;
+  return { waiting, active, total: getDownloaderQueueSize() };
+}
+
+function formatDateIndo(dateInput) {
+  if (!dateInput) return "-";
+  const d = new Date(dateInput);
+  if (Number.isNaN(d.getTime())) return String(dateInput);
+  return d.toLocaleDateString("id-ID", {
+    weekday: "long",
+    day: "2-digit",
+    month: "long"
+  });
+}
+
+setInterval(() => {
+  pruneRateLimitStore();
+  pruneRuntimeStats();
+  pruneYtCaches();
+}, 2 * 60 * 1000).unref?.();
 
 /* ===============================
    TTS COOLDOWN
@@ -512,6 +981,7 @@ export default async function handler(sock, msg) {
   const senderRateKey = normalizeJid(sender) || sender;
 
   try {
+    activeSockForJobs = sock;
     if (!text) return;
 
 
@@ -523,6 +993,13 @@ export default async function handler(sock, msg) {
     // ⛔ anti loop: abaikan pesan otomatis bot sendiri (ber-footer),
     // tapi izinkan command fromMe di private/grup
     if (msg.key.fromMe && text.includes(BOT_FOOTER)) return;
+
+    if (botState.maintenance.enabled && /^[1-5]$/.test(text)) {
+      const ctx = await buildAccessContext(sock, msg);
+      if (!ctx.isPrivileged) {
+        return reply(sock, msg, "🛠️ Bot sedang maintenance. Proses downloader sementara ditahan.");
+      }
+    }
 
 
     /* ===============================
@@ -642,8 +1119,19 @@ export default async function handler(sock, msg) {
     }
 
     if (/^[1-5]$/.test(text)) {
-      const cache = ytSearchCache.get(sender);
-      if (!cache) return;
+      const cacheState = ytSearchCache.get(sender);
+      if (!cacheState) return;
+      const cacheItems = Array.isArray(cacheState)
+        ? cacheState
+        : cacheState.items;
+      const cacheCreatedAt = Array.isArray(cacheState)
+        ? Date.now()
+        : Number(cacheState.createdAt || 0);
+      if (!Array.isArray(cacheItems) || !cacheItems.length) return;
+      if (cacheCreatedAt && Date.now() - cacheCreatedAt > YT_SEARCH_TTL_MS) {
+        ytSearchCache.delete(sender);
+        return reply(sock, msg, "⌛ Hasil pencarian sudah kadaluarsa. Kirim ulang `!ytsearch` atau `!musik`.");
+      }
       if (
         await enforceRateLimit({
           sock,
@@ -660,7 +1148,7 @@ export default async function handler(sock, msg) {
         return;
       }
 
-      const selected = cache[Number(text) - 1];
+      const selected = cacheItems[Number(text) - 1];
       if (!selected) return;
 
       ytSearchCache.delete(sender);
@@ -717,6 +1205,12 @@ export default async function handler(sock, msg) {
     const args = text.slice(1).trim().split(/\s+/);
     const command = args.shift().toLowerCase();
     const input = args.join(" ");
+    let accessContext = null;
+    const getAccessContext = async () => {
+      if (accessContext) return accessContext;
+      accessContext = await buildAccessContext(sock, msg);
+      return accessContext;
+    };
     const commandStartMs = Date.now();
     const logOk = (reason) =>
       logCommandResult({
@@ -736,6 +1230,24 @@ export default async function handler(sock, msg) {
         reason,
         durationMs: Date.now() - commandStartMs
       });
+
+    if (botState.maintenance.enabled) {
+      const isAllowedCore = MAINTENANCE_ALLOWED_COMMANDS.has(command);
+      if (!isAllowedCore) {
+        const ctx = await getAccessContext();
+        if (!ctx.isPrivileged) {
+          logFail("maintenance mode aktif");
+          const reason = botState.maintenance.reason
+            ? `\n📝 Alasan: ${botState.maintenance.reason}`
+            : "";
+          return reply(
+            sock,
+            msg,
+            `🛠️ Bot sedang maintenance. Coba lagi nanti.${reason}\n\nGunakan \`!status\` atau \`!stats\` untuk cek keadaan bot.`
+          );
+        }
+      }
+    }
 
     /* ===============================
        STIKER
@@ -815,8 +1327,7 @@ if (command === "stiker" || command === "sticker") {
        TOIMG
     ================================ */
     if (command === "toimg" || command === "toimage") {
-      const quoted =
-        msg.message?.extendedTextMessage?.contextInfo?.quotedMessage;
+      const quoted = getContextInfo(msg)?.quotedMessage;
 
       if (!quoted) {
         return reply(sock, msg, "❗ Reply stiker dengan !toimg");
@@ -841,6 +1352,94 @@ if (command === "stiker" || command === "sticker") {
     }
 
     /* ===============================
+       READ VIEW ONCE
+    ================================ */
+    if (command === "readviewonce" || command === "readviewone" || command === "rvo") {
+      const quoted = getContextInfo(msg)?.quotedMessage;
+      if (!quoted) {
+        return reply(sock, msg, "❗ Reply pesan view once, lalu kirim `!rvo`.");
+      }
+
+      let viewOncePayload =
+        quoted?.viewOnceMessage?.message ||
+        quoted?.viewOnceMessageV2?.message ||
+        quoted?.viewOnceMessageV2Extension?.message ||
+        null;
+
+      // Beberapa klien tidak pakai wrapper viewOnceMessage,
+      // tapi langsung di image/video dengan flag viewOnce=true.
+      if (!viewOncePayload) {
+        const directType = getContentType(quoted);
+        const directNode = directType ? quoted?.[directType] : null;
+        if (directType && directNode?.viewOnce) {
+          viewOncePayload = {
+            [directType]: {
+              ...directNode,
+              viewOnce: false
+            }
+          };
+        }
+      }
+
+      if (!viewOncePayload) {
+        return reply(sock, msg, "❗ Yang direply harus pesan *view once*.");
+      }
+
+      const mediaType = getContentType(viewOncePayload);
+      const mediaNode = mediaType ? viewOncePayload?.[mediaType] : null;
+      if (!mediaType || !mediaNode) {
+        return reply(sock, msg, "❌ Media view once tidak valid.");
+      }
+
+      try {
+        const buffer = await downloadMediaMessage(
+          { message: { [mediaType]: mediaNode } },
+          "buffer",
+          {}
+        );
+
+        if (mediaType === "imageMessage") {
+          return reply(sock, msg, {
+            image: buffer,
+            caption: mediaNode?.caption || "🖼️ View once berhasil dibuka."
+          });
+        }
+
+        if (mediaType === "videoMessage") {
+          return reply(sock, msg, {
+            video: buffer,
+            caption: mediaNode?.caption || "🎬 View once berhasil dibuka."
+          });
+        }
+
+        if (mediaType === "audioMessage") {
+          return reply(sock, msg, {
+            audio: buffer,
+            mimetype: mediaNode?.mimetype || "audio/ogg; codecs=opus",
+            ptt: false
+          });
+        }
+
+        if (mediaType === "stickerMessage") {
+          return reply(sock, msg, { sticker: buffer });
+        }
+
+        if (mediaType === "documentMessage") {
+          return reply(sock, msg, {
+            document: buffer,
+            fileName: mediaNode?.fileName || "view-once.bin",
+            mimetype: mediaNode?.mimetype || "application/octet-stream"
+          });
+        }
+
+        return reply(sock, msg, `⚠️ Tipe media view once belum didukung: ${mediaType}`);
+      } catch (err) {
+        logFail(getErrorMessage(err));
+        return reply(sock, msg, "❌ Gagal membaca view once.");
+      }
+    }
+
+    /* ===============================
        YTSEARCH
     ================================ */
     if (command === "ytsearch") {
@@ -851,7 +1450,10 @@ if (command === "stiker" || command === "sticker") {
 
       try {
         const results = await ytSearch(input);
-        ytSearchCache.set(sender, results);
+        ytSearchCache.set(sender, {
+          items: results,
+          createdAt: Date.now()
+        });
 
         let txt = "*🔎 Hasil YouTube:*\n\n";
         results.forEach((v, i) => {
@@ -878,7 +1480,10 @@ if (command === "stiker" || command === "sticker") {
 
       try {
         const results = await searchYouTubeMusic(input);
-        ytSearchCache.set(sender, results);
+        ytSearchCache.set(sender, {
+          items: results,
+          createdAt: Date.now()
+        });
 
         let txt = "*🎵 Hasil YMusic:*\n\n";
         results.forEach((v, i) => {
@@ -1092,17 +1697,48 @@ if (command === "stiker" || command === "sticker") {
     ================================ */
 
 if (command === "cuaca") {
-  if (!input) {
+  const cuacaInput = String(input || "").trim();
+  const isBesok = /^(besok|esok)\b/i.test(cuacaInput);
+  const lokasiQuery = isBesok
+    ? cuacaInput.replace(/^(besok|esok)\s*/i, "").trim()
+    : cuacaInput;
+
+  if (!lokasiQuery) {
     logFail("lokasi kosong");
     return reply(sock, msg,
-      `❗ *Cara pakai:*\n!cuaca <nama lokasi>\n\n*Contoh:*\n• !cuaca Tawang\n• !cuaca Tasikmalaya\n• !cuaca Cipedes\n• !cuaca Bandung\n\n_Bisa pakai nama kecamatan atau kota_`
+      `❗ *Cara pakai:*\n!cuaca <nama lokasi>\n!cuaca besok <nama lokasi>\n\n*Contoh:*\n• !cuaca Tawang\n• !cuaca besok Tasikmalaya\n• !cuaca Bandung\n\n_Bisa pakai nama kecamatan atau kota_`
     );
   }
 
  try {
     await reply(sock, msg, "🔍 Mencari data cuaca...");
 
-    const w = await getWeatherBMKG(input);
+    if (isBesok) {
+      const wBesok = await getWeatherTomorrow(lokasiQuery);
+      const cacheLabel = wBesok?._cache?.hit
+        ? `cache (${wBesok._cache.ageSec} detik)`
+        : "live";
+      const tanggal = formatDateIndo(wBesok.date);
+      const textBesok = `
+🌤️ *PRAKIRAAN BESOK*
+📍 ${wBesok.lokasi}
+🗺️ ${wBesok.provinsi}
+📅 ${tanggal}
+
+${getWeatherIcon(wBesok.weather_desc)} ${wBesok.weather_desc}
+🌡️ Suhu: *${wBesok.tMin}°C - ${wBesok.tMax}°C*
+🌧️ Peluang hujan: ${wBesok.rainChance}%
+💧 Kelembapan rata-rata: ${wBesok.humidityAvg}%
+💨 Angin rata-rata: ${wBesok.windAvg} km/j
+
+📡 Sumber: Tomorrow.io | ${cacheLabel}
+`.trim();
+
+      logOk(`lokasi-besok=${wBesok.lokasi}`);
+      return reply(sock, msg, textBesok);
+    }
+
+    const w = await getWeatherBMKG(lokasiQuery);
     const s = w.cuacaSekarang;
 
     // ✅ Definisikan jamSekarang SEBELUM dipakai
@@ -1112,33 +1748,35 @@ if (command === "cuaca") {
       timeZone: "Asia/Jakarta"
     });
 
-    let prakiraan = "";
-    w.prakiraan.forEach(c => {
+    const prakiraan = w.prakiraan.map(c => {
       const date = new Date(c.local_datetime);
       const jam = date.toLocaleTimeString("id-ID", {
         hour: "2-digit",
         minute: "2-digit",
         timeZone: "Asia/Jakarta"
       });
-      prakiraan += `🕒 ${jam} | ${getWeatherIcon(c.weather_desc)} ${c.weather_desc} | ${c.t}°C | 🌧️ ${c.rainChance}%\n`;
-    });
+
+      return `• ${jam} | ${getWeatherIcon(c.weather_desc)} ${c.weather_desc} | 🌡️ ${c.t}°C | 🌧️ ${c.rainChance}%`;
+    }).join("\n");
+
+    const cacheLabel = w?._cache?.hit
+      ? `cache (${w._cache.ageSec} detik)`
+      : "live";
 
     const text = `
-🌦️ *PRAKIRAAN CUACA*
-━━━━━━━━━━━━━━━━━━
-📍 *${w.lokasi}*
+🌦️ *CUACA SEKARANG*
+📍 ${w.lokasi}
 🗺️ ${w.provinsi}
+🕒 ${jamSekarang} WIB
 
-🌡️ *Kondisi Pukul ${jamSekarang} WIB:*
 ${getWeatherIcon(s.weather_desc)} ${s.weather_desc}
-🌡️ Suhu: *${s.t}°C*
-💧 Kelembapan: ${s.hu}%
+🌡️ Suhu: *${s.t}°C* (RH ${s.hu}%)
 💨 Angin: ${s.ws} km/j
 
-⏱️ *Prakiraan Beberapa Jam ke Depan:*
+⏱️ *Prakiraan Singkat*
 ${prakiraan}
-━━━━━━━━━━━━━━━━━━
-📡 _Sumber: Tomorrow.io_
+
+📡 Sumber: Tomorrow.io | ${cacheLabel}
 `.trim();
 
     logOk(`lokasi=${w.lokasi}`);
@@ -1148,7 +1786,7 @@ ${prakiraan}
     logError("CUACA ERROR", err);
     logFail(getErrorMessage(err));
     return reply(sock, msg,
-      `❌ Lokasi *"${input}"* tidak ditemukan.\n\nCoba gunakan nama yang lebih umum.\n\n*Contoh:*\n• !cuaca Tawang\n• !cuaca Tasikmalaya\n• !cuaca Bandung`
+      `❌ Lokasi *"${lokasiQuery}"* tidak ditemukan.\n\nCoba gunakan nama yang lebih umum.\n\n*Contoh:*\n• !cuaca Tawang\n• !cuaca besok Tasikmalaya\n• !cuaca Bandung`
     );
   }
 }
@@ -1222,6 +1860,167 @@ ${prakiraan}
       }
     }
 
+    if (command === "quote" || command === "q") {
+      if (
+        await enforceRateLimit({
+          sock,
+          msg,
+          senderKey: senderRateKey,
+          bucket: "image",
+          limit: 8,
+          windowMs: 60_000,
+          commandLabel: command,
+          sender,
+          jid
+        })
+      ) {
+        return;
+      }
+
+      const ctxInfo = msg?.message?.extendedTextMessage?.contextInfo;
+      const quoted = ctxInfo?.quotedMessage;
+      const quotedText = getQuotedText(quoted);
+      const textInput = String(input || "").trim();
+      const finalText = textInput || quotedText;
+
+      if (!finalText) {
+        logFail("quote kosong");
+        return reply(sock, msg, "❗ Kirim `!quote <teks>` atau reply pesan lalu kirim `!quote`.");
+      }
+
+      const author = msg.pushName || normalizeJid(sender) || "User";
+      try {
+        const image = await createQuoteImageBuffer(finalText, author);
+        logOk("quote image terkirim");
+        return reply(sock, msg, {
+          image,
+          caption: "📝 Quote berhasil dibuat."
+        });
+      } catch (err) {
+        logFail(getErrorMessage(err));
+        return reply(sock, msg, "❌ Gagal membuat quote.");
+      }
+    }
+
+    if (command === "jadwal") {
+      const raw = String(input || "").trim();
+      const [firstToken, ...restTokens] = raw.split(/\s+/).filter(Boolean);
+      const sub = String(firstToken || "list").toLowerCase();
+      const rest = restTokens.join(" ").trim();
+
+      const inCurrentChat = reminders.filter(r => r.jid === jid);
+
+      if (sub === "list" || sub === "ls") {
+        if (!inCurrentChat.length) {
+          logFail("jadwal list kosong");
+          return reply(sock, msg, "📭 Belum ada jadwal di chat ini.");
+        }
+
+        const lines = inCurrentChat
+          .sort((a, b) => String(a.time).localeCompare(String(b.time)))
+          .map(formatReminderListItem)
+          .join("\n");
+        logOk(`jadwal list total=${inCurrentChat.length}`);
+        return reply(sock, msg, `🗓️ *JADWAL CHAT INI*\n${lines}`);
+      }
+
+      if (sub === "tambah" || sub === "add" || normalizeReminderTime(sub)) {
+        const timeRaw = normalizeReminderTime(sub) ? sub : firstToken;
+        const textRaw = normalizeReminderTime(sub) ? rest : raw.replace(/^(tambah|add)\s+/i, "");
+        const [timeToken, ...msgTokens] = textRaw.split(/\s+/).filter(Boolean);
+        const time = normalizeReminderTime(normalizeReminderTime(sub) ? timeRaw : timeToken);
+        const message = normalizeReminderTime(sub)
+          ? rest
+          : msgTokens.join(" ").trim();
+
+        if (!time || !message) {
+          logFail("jadwal tambah format salah");
+          return reply(
+            sock,
+            msg,
+            "❗ Format:\n• !jadwal tambah HH:MM pesan\n• !jadwal HH:MM pesan\nContoh: !jadwal 08:00 Standup tim"
+          );
+        }
+
+        const id = Math.random().toString(36).slice(2, 7);
+        reminders.push({
+          id,
+          jid,
+          time,
+          message,
+          enabled: true,
+          createdAt: Date.now(),
+          createdBy: normalizeJid(sender),
+          lastTriggeredDate: ""
+        });
+        saveReminders();
+        logOk(`jadwal tambah id=${id} jam=${time}`);
+        return reply(sock, msg, `✅ Jadwal ditambahkan.\nID: ${id}\nJam: ${time} WIB\nPesan: ${message}`);
+      }
+
+      if (sub === "hapus" || sub === "del" || sub === "delete") {
+        const id = rest.split(/\s+/)[0] || "";
+        if (!id) {
+          logFail("jadwal hapus tanpa id");
+          return reply(sock, msg, "❗ Contoh: !jadwal hapus <id>");
+        }
+
+        const before = reminders.length;
+        reminders = reminders.filter(r => !(r.jid === jid && String(r.id) === String(id)));
+        if (reminders.length === before) {
+          logFail("jadwal hapus id tidak ditemukan");
+          return reply(sock, msg, `❌ Jadwal dengan ID ${id} tidak ditemukan di chat ini.`);
+        }
+
+        saveReminders();
+        logOk(`jadwal hapus id=${id}`);
+        return reply(sock, msg, `🗑️ Jadwal ${id} dihapus.`);
+      }
+
+      if (
+        sub === "clear"
+      ) {
+        const before = reminders.length;
+        reminders = reminders.filter(r => r.jid !== jid);
+        const removed = before - reminders.length;
+
+        if (!removed) {
+          logFail("jadwal clear kosong");
+          return reply(sock, msg, "📭 Tidak ada jadwal untuk dihapus di chat ini.");
+        }
+
+        saveReminders();
+        logOk(`jadwal clear total=${removed}`);
+        return reply(sock, msg, `🗑️ ${removed} jadwal di chat ini berhasil dihapus.`);
+      }
+
+      if (sub === "on" || sub === "off") {
+        const id = rest.split(/\s+/)[0] || "";
+        if (!id) {
+          logFail("jadwal on/off tanpa id");
+          return reply(sock, msg, `❗ Contoh: !jadwal ${sub} <id>`);
+        }
+
+        const target = reminders.find(r => r.jid === jid && String(r.id) === String(id));
+        if (!target) {
+          logFail("jadwal on/off id tidak ditemukan");
+          return reply(sock, msg, `❌ Jadwal dengan ID ${id} tidak ditemukan di chat ini.`);
+        }
+
+        target.enabled = sub === "on";
+        saveReminders();
+        logOk(`jadwal ${sub} id=${id}`);
+        return reply(sock, msg, `✅ Jadwal ${id} ${sub === "on" ? "diaktifkan" : "dinonaktifkan"}.`);
+      }
+
+      logFail("jadwal subcommand tidak valid");
+      return reply(
+        sock,
+        msg,
+        "❗ Format jadwal:\n• !jadwal list\n• !jadwal tambah HH:MM pesan\n• !jadwal HH:MM pesan\n• !jadwal hapus <id>\n• !jadwal clear\n• !jadwal on <id>\n• !jadwal off <id>"
+      );
+    }
+
     /* ===============================
        HELP / MENU
     ================================ */
@@ -1278,14 +2077,29 @@ apabila ada fitur yang kurang stabil atau tidak berjalan sempurna.
   🖼️ *Gambar*
 • !gambar <kata kunci>
   └ Cari gambar via Google
+• !quote <teks>
+• !q <teks>
+  └ Buat gambar quote dari teks / reply chat
 
   🔄 *Konversi Media*
 • !toimg
   └ Ubah stiker menjadi gambar
+• !rvo
+  └ Reply pesan view once untuk baca ulang media
 
   🌦️ *Cuaca* (Beta)
 • !cuaca <lokasi>(spasi)<provinsi>(spasi)<negara>
+• !cuaca besok <lokasi>
   └ Cek cuaca di lokasi tertentu
+
+🗓️ *Jadwal*
+• !jadwal list
+• !jadwal HH:MM <pesan>
+• !jadwal tambah HH:MM <pesan>
+• !jadwal hapus <id>
+• !jadwal clear
+• !jadwal on <id>
+• !jadwal off <id>
 
 
 🎧 YouTube
@@ -1308,10 +2122,18 @@ apabila ada fitur yang kurang stabil atau tidak berjalan sempurna.
 • !tagadmin <pesan>
   └ Tag admin grup
 
+🧹 *Moderasi*
+• !hapus
+  └ Reply pesan bot untuk hapus pesan tersebut
+• !maintenance status
+• !maintenance on [alasan]
+• !maintenance off
+
 📊 *Status Bot*
 • !ping
 • !status
 • !stats
+• !antrian
   └ Cek status bot & server
 
 ━━━━━━━━━━━━━━━━━━
@@ -1330,6 +2152,230 @@ apabila ada fitur yang kurang stabil atau tidak berjalan sempurna.
 
       logOk("menu terkirim");
       return reply(sock, msg, menuText);
+    }
+
+    if (command === "maintenance") {
+      const ctx = await getAccessContext();
+      const subRaw = String(input || "").trim();
+      const [subCmd] = subRaw.split(/\s+/);
+      const sub = String(subCmd || "status").toLowerCase();
+
+      if (sub === "status" || !subRaw) {
+        const st = botState.maintenance;
+        const enabledText = st.enabled ? "ON" : "OFF";
+        const since = st.enabledAt ? `\n🕒 Sejak: ${new Date(st.enabledAt).toLocaleString("id-ID")}` : "";
+        const by = st.enabledBy ? `\n👤 Oleh: ${st.enabledBy}` : "";
+        const reason = st.reason ? `\n📝 Alasan: ${st.reason}` : "";
+        logOk(`maintenance status=${enabledText}`);
+        return reply(sock, msg, `🛠️ Maintenance: *${enabledText}*${since}${by}${reason}`);
+      }
+
+      if (!ctx.isOwner) {
+        logFail("maintenance ditolak: bukan owner");
+        return reply(sock, msg, "🔒 Hanya owner yang boleh mengubah mode maintenance.");
+      }
+
+      if (sub === "on") {
+        const reason = subRaw.replace(/^on\s*/i, "").trim();
+        botState.maintenance.enabled = true;
+        botState.maintenance.enabledAt = Date.now();
+        botState.maintenance.enabledBy = (ctx.senderIds && ctx.senderIds[0]) || normalizeJid(sender);
+        botState.maintenance.reason = reason;
+        saveBotState();
+        logOk("maintenance on");
+        return reply(
+          sock,
+          msg,
+          `✅ Maintenance diaktifkan.${reason ? `\n📝 ${reason}` : ""}`
+        );
+      }
+
+      if (sub === "off") {
+        botState.maintenance.enabled = false;
+        botState.maintenance.enabledAt = null;
+        botState.maintenance.enabledBy = "";
+        botState.maintenance.reason = "";
+        saveBotState();
+        logOk("maintenance off");
+        return reply(sock, msg, "✅ Maintenance dimatikan. Bot kembali normal.");
+      }
+
+      logFail("maintenance subcommand tidak valid");
+      return reply(
+        sock,
+        msg,
+        "❗ Format:\n• !maintenance status\n• !maintenance on [alasan]\n• !maintenance off"
+      );
+    }
+
+    if (command === "hapus") {
+      const ctxInfo = getContextInfo(msg);
+      const stanzaId = ctxInfo?.stanzaId;
+      const quoted = ctxInfo?.quotedMessage;
+      const quotedParticipantsRaw = Array.from(
+        new Set(
+          [
+            ctxInfo?.participant,
+            ctxInfo?.participantPn,
+            ctxInfo?.participantLid
+          ]
+            .map(v => String(v || "").trim())
+            .filter(Boolean)
+        )
+      );
+
+      if (!stanzaId || !quoted) {
+        logFail("hapus gagal: tidak reply pesan");
+        return reply(sock, msg, "❗ Reply pesan bot yang mau dihapus, lalu kirim `!hapus`.");
+      }
+
+      const ctx = await getAccessContext();
+      if (jid.endsWith("@g.us") && !ctx.isPrivileged) {
+        logFail("hapus ditolak: bukan owner/admin");
+        return reply(sock, msg, "🔒 Di grup, hanya owner/admin yang boleh pakai `!hapus`.");
+      }
+
+      const botIds = getBotIdSet(sock);
+      const quotedText = getQuotedText(quoted);
+      const isBotFooterMessage = String(quotedText || "").includes(BOT_FOOTER);
+      const isBotParticipant = quotedParticipantsRaw.some(participantRaw => {
+        const raw = String(participantRaw || "").trim().toLowerCase();
+        if (raw && botIds.has(raw)) return true;
+        const norm = normalizeJid(participantRaw || "");
+        return norm && botIds.has(norm);
+      });
+
+      if (!isBotFooterMessage && !isBotParticipant) {
+        logFail("hapus gagal: target bukan pesan bot");
+        return reply(sock, msg, "❌ Yang bisa dihapus hanya pesan dari bot.");
+      }
+
+      try {
+        const candidateKeys = [];
+        const isGroup = jid.endsWith("@g.us");
+        let quotedParticipants = await expandParticipantCandidates(sock, quotedParticipantsRaw);
+        const remoteJidCandidates = Array.from(
+          new Set(
+            [jid, String(ctxInfo?.remoteJid || "").trim()]
+              .filter(Boolean)
+          )
+        );
+
+        if (isGroup) {
+          // Jika participant quoted kosong tapi pesan dikenali sebagai pesan bot (footer),
+          // pakai identitas bot sebagai fallback participant.
+          if (!quotedParticipants.length && isBotFooterMessage) {
+            const botRaw = [sock?.user?.id, sock?.user?.lid]
+              .map(v => String(v || "").trim())
+              .filter(Boolean);
+            quotedParticipants = await expandParticipantCandidates(sock, botRaw);
+          }
+
+          // Group delete kadang butuh variasi fromMe/participant, coba beberapa strategi.
+          if (quotedParticipants.length) {
+            for (const remoteJidCandidate of remoteJidCandidates) {
+              for (const participant of quotedParticipants) {
+                candidateKeys.push({
+                  remoteJid: remoteJidCandidate,
+                  id: stanzaId,
+                  participant,
+                  fromMe: true
+                });
+                candidateKeys.push({
+                  remoteJid: remoteJidCandidate,
+                  id: stanzaId,
+                  participant
+                });
+                candidateKeys.push({
+                  remoteJid: remoteJidCandidate,
+                  id: stanzaId,
+                  participant,
+                  fromMe: false
+                });
+              }
+            }
+          }
+
+          for (const remoteJidCandidate of remoteJidCandidates) {
+            candidateKeys.push({
+              remoteJid: remoteJidCandidate,
+              id: stanzaId,
+              fromMe: true
+            });
+            candidateKeys.push({
+              remoteJid: remoteJidCandidate,
+              id: stanzaId
+            });
+            candidateKeys.push({
+              remoteJid: remoteJidCandidate,
+              id: stanzaId,
+              fromMe: false
+            });
+          }
+        } else {
+          for (const remoteJidCandidate of remoteJidCandidates) {
+            candidateKeys.push({
+              remoteJid: remoteJidCandidate,
+              id: stanzaId,
+              fromMe: true
+            });
+            candidateKeys.push({
+              remoteJid: remoteJidCandidate,
+              id: stanzaId
+            });
+            candidateKeys.push({
+              remoteJid: remoteJidCandidate,
+              id: stanzaId,
+              fromMe: false
+            });
+          }
+        }
+
+        const seen = new Set();
+        const dedupedKeys = candidateKeys.filter(key => {
+          const signature = JSON.stringify({
+            remoteJid: key.remoteJid || "",
+            id: key.id || "",
+            participant: key.participant || "",
+            fromMe: Boolean(key.fromMe)
+          });
+          if (seen.has(signature)) return false;
+          seen.add(signature);
+          return true;
+        });
+
+        let deleted = false;
+        const successLogs = [];
+        let lastErr = null;
+        for (const key of dedupedKeys) {
+          const result = await tryDeleteByKey(sock, jid, key);
+          if (result.ok) {
+            deleted = true;
+            successLogs.push(
+              `via=${result.via || "-"} fromMe=${typeof key.fromMe === "boolean" ? key.fromMe : "unset"} participant=${key.participant ? "set" : "unset"}`
+            );
+            continue;
+          }
+          lastErr = result.error;
+        }
+
+        if (!deleted) {
+          logWarn(
+            `hapus gagal semua candidate | id=${stanzaId} | total_candidate=${dedupedKeys.length}`
+          );
+          throw lastErr || new Error("Delete key tidak valid");
+        }
+
+        logOk(`hapus request terkirim total_ok=${successLogs.length} | ${successLogs.slice(0, 3).join(" || ")}`);
+        return reply(
+          sock,
+          msg,
+          "🧹 Permintaan hapus sudah dikirim. Kalau pesan target belum hilang, ulangi `!hapus` pada pesan yang sama."
+        );
+      } catch (err) {
+        logFail(getErrorMessage(err));
+        return reply(sock, msg, "❌ Gagal menghapus pesan bot.");
+      }
     }
 
     /* ===============================
@@ -1843,6 +2889,23 @@ if (command === "suara") {
 
       logOk(`status ping=${ping}ms net=${netLatency ? `${netLatency}ms` : "off"}`);
       return reply(sock, msg, textStatus);
+    }
+
+    if (command === "antrian" || command === "queue") {
+      const q = getDownloaderQueueSnapshot();
+      const activeLine = q.active
+        ? `🎬 Sedang diproses: ${q.active.name} (${q.active.runningSec} detik)`
+        : "🎬 Sedang diproses: -";
+      const textQueue = `
+🧾 *STATUS ANTRIAN DOWNLOADER*
+━━━━━━━━━━━━━━━━━━
+${activeLine}
+📥 Menunggu: ${q.waiting}
+🧮 Total antrean: ${q.total}
+`.trim();
+
+      logOk(`antrian total=${q.total}`);
+      return reply(sock, msg, textQueue);
     }
 
     if (command === "stats") {
