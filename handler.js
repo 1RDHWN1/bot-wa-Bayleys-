@@ -970,6 +970,39 @@ setInterval(() => {
 const ttsCooldown = new Map();
 const TTS_DELAY = 15_000; // 15 detik
 
+/* ===============================
+   IMAGE SEARCH GLOBAL QUEUE
+   Mencegah 429 ke Google CSE karena
+   banyak request bersamaan
+================================ */
+const imageSearchQueue = [];
+let imageSearchBusy = false;
+const IMAGE_SEARCH_INTERVAL_MS = 1200; // min jeda antar request ke CSE
+
+function enqueueImageSearch(worker) {
+  return new Promise((resolve, reject) => {
+    imageSearchQueue.push({ worker, resolve, reject });
+    processImageSearchQueue();
+  });
+}
+
+async function processImageSearchQueue() {
+  if (imageSearchBusy || !imageSearchQueue.length) return;
+  imageSearchBusy = true;
+  const task = imageSearchQueue.shift();
+  try {
+    const result = await task.worker();
+    task.resolve(result);
+  } catch (err) {
+    task.reject(err);
+  } finally {
+    setTimeout(() => {
+      imageSearchBusy = false;
+      processImageSearchQueue();
+    }, IMAGE_SEARCH_INTERVAL_MS);
+  }
+}
+
 
 /* ===============================
    MAIN HANDLER
@@ -1843,8 +1876,15 @@ ${prakiraan}
       );
 
       try {
-        const imageUrl = await searchImageCSE(query, safeMode);
+        // Antrekan ke global image queue agar tidak membanjiri Google CSE
+        const imageUrl = await enqueueImageSearch(() => searchImageCSE(query, safeMode));
         const image = await downloadImage(imageUrl);
+
+        // Guard null: downloadImage bisa return null jika URL gagal diunduh
+        if (!image || !image.buffer) {
+          logFail("buffer gambar null");
+          return reply(sock, msg, "❌ Gambar tidak bisa diunduh. Coba kata kunci lain.");
+        }
 
         logOk(`gambar mode=${safeMode ? "safe" : "unsafe"}`);
         return reply(sock, msg, {
@@ -1856,7 +1896,7 @@ ${prakiraan}
         });
       } catch (err) {
         logFail(getErrorMessage(err));
-        return reply(sock, msg, "❌ Gagal menampilkan gambar.");
+        return reply(sock, msg, "❌ Gagal menampilkan gambar. Coba lagi.");
       }
     }
 

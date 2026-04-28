@@ -313,36 +313,93 @@ export async function searchImageCSE(query, safeMode = true) {
 
   if (!apiKey || !cseId) throw new Error("GOOGLE_API_KEY / GOOGLE_CSE_ID belum diset");
 
-  const res = await axios.get("https://www.googleapis.com/customsearch/v1", {
-    params: { key: apiKey, cx: cseId, q: query, searchType: "image", num: 5, safe: safeMode ? "active" : "off" }
-  });
+  // Retry otomatis kalau kena 429 (rate limit per detik, bukan kuota harian)
+  const MAX_RETRIES = 2;
+  let lastErr;
 
-  const items = res.data.items;
-  if (!items || !items.length) return null;
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      const res = await axios.get("https://www.googleapis.com/customsearch/v1", {
+        params: {
+          key: apiKey,
+          cx: cseId,
+          q: query,
+          searchType: "image",
+          num: 5,
+          safe: safeMode ? "active" : "off"
+        },
+        timeout: 10_000
+      });
 
-  return items[Math.floor(Math.random() * items.length)].link;
+      const items = res.data?.items;
+      if (!items || !items.length) throw new Error("Tidak ada hasil gambar untuk kata kunci ini.");
+
+      // Kembalikan semua URL (diacak) agar downloadImage bisa coba fallback
+      const urls = items.map(item => item.link).filter(Boolean);
+      for (let i = urls.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [urls[i], urls[j]] = [urls[j], urls[i]];
+      }
+      return urls;
+
+    } catch (err) {
+      lastErr = err;
+      const status = err?.response?.status;
+
+      // 429: tunggu sebentar lalu retry
+      if (status === 429 && attempt < MAX_RETRIES) {
+        const waitMs = (attempt + 1) * 1500; // 1.5s, 3s
+        await new Promise(r => setTimeout(r, waitMs));
+        continue;
+      }
+
+      // 403 biasanya kuota harian habis — langsung throw, retry tidak membantu
+      if (status === 403) {
+        throw new Error("Kuota harian Google CSE habis. Coba lagi besok.");
+      }
+
+      throw err;
+    }
+  }
+
+  throw lastErr;
 }
 
 // ============================================================
 //   DOWNLOAD IMAGE
+//   Menerima URL tunggal atau array URL (untuk fallback otomatis)
 // ============================================================
 
-export async function downloadImage(url) {
-  try {
-    const res = await axios.get(url, {
-      responseType: "arraybuffer",
-      timeout: 8000,
-      headers: { "User-Agent": "Mozilla/5.0", Accept: "image/*" }
-    });
+export async function downloadImage(urlOrUrls) {
+  const urls = Array.isArray(urlOrUrls)
+    ? urlOrUrls.filter(Boolean)
+    : [urlOrUrls].filter(Boolean);
 
-    const contentType = res.headers["content-type"] || "";
-    if (!contentType.startsWith("image/")) return null;
-    if (contentType.includes("svg") || contentType.includes("avif")) return null;
+  if (!urls.length) return null;
 
-    return { buffer: Buffer.from(res.data), mimetype: contentType };
-  } catch {
-    return null;
+  for (const url of urls) {
+    try {
+      const res = await axios.get(url, {
+        responseType: "arraybuffer",
+        timeout: 8000,
+        headers: { "User-Agent": "Mozilla/5.0", Accept: "image/*" }
+      });
+
+      const contentType = res.headers["content-type"] || "";
+      if (!contentType.startsWith("image/")) continue;
+      if (contentType.includes("svg") || contentType.includes("avif")) continue;
+
+      const buffer = Buffer.from(res.data);
+      if (!buffer || buffer.length < 100) continue; // skip buffer kosong/rusak
+
+      return { buffer, mimetype: contentType };
+    } catch {
+      // URL ini gagal, coba URL berikutnya
+      continue;
+    }
   }
+
+  return null; // semua URL gagal
 }
 
 export async function stickerToImage(buffer) {
