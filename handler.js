@@ -30,7 +30,7 @@ import {
   formatUptime,
   formatBytes,
   pingUrl,
-  searchImageCSE,
+  searchImage,
   getText,
   downloadImage,
   stickerToImage,
@@ -1877,7 +1877,7 @@ ${prakiraan}
 
       try {
         // Antrekan ke global image queue agar tidak membanjiri Google CSE
-        const imageUrl = await enqueueImageSearch(() => searchImageCSE(query, safeMode));
+        const imageUrl = await enqueueImageSearch(() => searchImage(query, safeMode));
         const image = await downloadImage(imageUrl);
 
         // Guard null: downloadImage bisa return null jika URL gagal diunduh

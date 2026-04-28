@@ -346,23 +346,64 @@ export async function searchImageCSE(query, safeMode = true) {
       lastErr = err;
       const status = err?.response?.status;
 
-      // 429: tunggu sebentar lalu retry
-      if (status === 429 && attempt < MAX_RETRIES) {
-        const waitMs = (attempt + 1) * 1500; // 1.5s, 3s
+      // 429 atau 403 = rate limit per menit — tunggu lebih lama lalu retry
+      if ((status === 429 || status === 403) && attempt < MAX_RETRIES) {
+        const waitMs = (attempt + 1) * 4000; // 4s, 8s — cukup untuk reset rate limit
         await new Promise(r => setTimeout(r, waitMs));
         continue;
       }
 
-      // 403 biasanya kuota harian habis — langsung throw, retry tidak membantu
-      if (status === 403) {
-        throw new Error("Kuota harian Google CSE habis. Coba lagi besok.");
+      // Semua retry habis, kasih pesan yang jelas
+      if (status === 429 || status === 403) {
+        throw new Error("RATE_LIMIT");
       }
 
       throw err;
     }
   }
 
-  throw lastErr;
+  throw new Error("RATE_LIMIT");
+}
+
+// Wrapper utama: coba Google CSE dulu, fallback ke Pixabay
+export async function searchImage(query, safeMode = true) {
+  try {
+    return await searchImageCSE(query, safeMode);
+  } catch (err) {
+    if (err?.message === "RATE_LIMIT" || err?.response?.status === 429 || err?.response?.status === 403) {
+      // Google CSE rate limit → fallback ke Pixabay
+      return await searchImagePixabay(query);
+    }
+    throw err;
+  }
+}
+
+// ============================================================
+//   PIXABAY IMAGE SEARCH (fallback kalau Google CSE rate limit)
+// ============================================================
+
+export async function searchImagePixabay(query) {
+  const apiKey = process.env.PIXABAY_API_KEY;
+  if (!apiKey) throw new Error("PIXABAY_API_KEY belum diset");
+
+  const res = await axios.get("https://pixabay.com/api/", {
+    params: {
+      key: apiKey,
+      q: query,
+      image_type: "all",
+      per_page: 10,
+      safesearch: true,
+      lang: "id"
+    },
+    timeout: 10_000
+  });
+
+  const hits = res.data?.hits;
+  if (!hits || !hits.length) throw new Error("Tidak ada hasil gambar di Pixabay.");
+
+  // Acak urutan, ambil 5 URL terbaik
+  const shuffled = hits.sort(() => Math.random() - 0.5).slice(0, 5);
+  return shuffled.map(h => h.largeImageURL || h.webformatURL).filter(Boolean);
 }
 
 // ============================================================
