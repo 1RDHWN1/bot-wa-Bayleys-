@@ -601,7 +601,18 @@ async function tryDeleteByKey(sock, jid, key) {
     ...(key?.participant ? { participant: key.participant } : {})
   };
 
-  let relayErr = null;
+  if (!normalizedKey.id) {
+    return { ok: false, error: new Error("Delete key tidak punya id pesan") };
+  }
+
+  let sendErr = null;
+  try {
+    await sock.sendMessage(normalizedKey.remoteJid, { delete: normalizedKey });
+    return { ok: true, via: "sendMessage" };
+  } catch (err) {
+    sendErr = err;
+  }
+
   try {
     await sock.relayMessage(
       normalizedKey.remoteJid,
@@ -615,14 +626,7 @@ async function tryDeleteByKey(sock, jid, key) {
     );
     return { ok: true, via: "relay" };
   } catch (err) {
-    relayErr = err;
-  }
-
-  try {
-    await sock.sendMessage(normalizedKey.remoteJid, { delete: normalizedKey });
-    return { ok: true, via: "sendMessage" };
-  } catch (sendErr) {
-    return { ok: false, error: sendErr || relayErr || new Error("Delete gagal") };
+    return { ok: false, error: err || sendErr || new Error("Delete gagal") };
   }
 }
 
@@ -2737,11 +2741,7 @@ apabila ada fitur yang kurang stabil atau tidak berjalan sempurna.
         }
 
         logOk(`hapus request terkirim total_ok=${successLogs.length} | ${successLogs.slice(0, 3).join(" || ")}`);
-        return reply(
-          sock,
-          msg,
-          "🧹 Permintaan hapus sudah dikirim. Kalau pesan target belum hilang, ulangi `!hapus` pada pesan yang sama."
-        );
+        return;
       } catch (err) {
         logFail(getErrorMessage(err));
         return reply(sock, msg, "❌ Gagal menghapus pesan bot.");
