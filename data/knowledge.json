@@ -3,8 +3,32 @@
     "jadwal penggunaan sekre 2026": "*WeekDay* **Senin** 1. *Sesi 1:* (18:15 - 19:45) 2. *Sesi 2:* (19:45 - 21:00) **Selasa** 1. *Sesi 1:* (18:15 - 19:45) 2. *Sesi 2:* (19:45 - 21:00) **Rabu** 1. *Sesi 1:* (18:15 - 19:45) 2. *Sesi 2:* (19:45 - 21:00) **Kamis** 1. *Sesi 1:* (18:15 - 19:45) 2. *Sesi 2:* (19:45 - 21:00) **Jumat** 1. *Sesi 1:* (18:15 - 19:45) 2. *Sesi 2:* (19:45 - 21:00) *WeekEnd* **Sabtu** * **Sesi 1:** (09:00 - 11:00) * **Sesi 2:** (11:00 - 13:00) * **Sesi 3:** (13:00 - 15:00) * **Sesi 4:** (15:00 - 17:00) * **Sesi 5:** (17:00 - 19:00) * **Sesi 6:** (19:00 - 21:00) **Minggu** * **Sesi 1:** (09:00 - 11:00) * **Sesi 2:** (11:00 - 13:00) * **Sesi 3:** (13:00 - 15:00) * **Sesi 4:** (15:00 - 17:00) * **Sesi 5:** (17:00 - 19:00) * **Sesi 6:** (19:00 - 21:00)"
   },
   "group:120363328477124938@g.us": {
-    "jadwal penggunaan sekre 2026": "Weekday Senin 18:15 – 19:45 → Meister Inside 19:45 – 21:00 → Rasi Bintang Selasa 18:15 – 19:45 → Night Frequency 19:45 – 21:00 → Echo Skyline Rabu 18:15 – 19:45 → Velvet Noise 19:45 – 21:00 → Sonic Pulse Kamis 18:15 – 19:45 → Crimson Alley 19:45 – 21:00 → Neon Chapter Jumat 18:15 – 19:45 → After Dusk 19:45 – 21:00 → Broken Chords Weekend Sabtu 09:00 – 11:00 → Morning Riot 11:00 – 13:00 → The Backyard Jam 13:00 – 15:00 → Sunset Theory 15:00 – 17:00 → Black Horizon 17:00 – 19:00 → Silver Drive 19:00 – 21:00 → Midnight Echo Minggu 09:00 – 11:00 → Lazy Sunday Band 11:00 – 13:00 → Acoustic Vibes 13:00 – 15:00 → Garage Kids 15:00 – 17:00 → Storm Rebels 17:00 – 19:00 → Last Minute Project 19:00 – 21:00 → Final Set",
-    "data matkul": "sains data"
+    "matkul hari senin": "1. kalkulus 2. SI 3. pemweb",
+    "steering committee struktur jabatan ukm seni musik 2026": "Ketua: Hilmi Aidzil Putra. Jajaran Pengurus (Sekretaris 1 & 2: Dede Dalpa Khoerunnisa & Tahany Khansa), (Bendahara 1 & 2: Syifa Rahmania Salsabila & Kamila Latifa).",
+    "steering committee visi misi ukm seni musik 2026": "Menjadikan UKM Seni Musik sebagai ruang seni kreatif dan berkarakter yang menjunjung solidaritas. Targetnya meliputi penguatan internal organisasi, penyediaan ruang ekspresi yang inklusif, serta pembangunan branding.",
+    "steering committee tugas pokok ukm seni musik 2026": "Ketua memimpin secara menyeluruh berdasarkan AD/ART. Sekretaris menyelenggarakan administrasi dan notulensi. Bendahara mengelola keuangan dan RAB organisasi.",
+    "presidium struktur jabatan ukm seni musik 2026": "Presidium 1: Ihsan Adhia. Presidium 2: Galuh Rizky Bahari. Presidium 3: Winda Malika Aprilia.",
+    "presidium tugas pokok ukm seni musik 2026": "Pimpinan sidang atau rapat yang bertugas membaca putusan serta mengatur alur pembicaraan dalam quorum persidangan. Presidium 1 memimpin dan membaca putusan. Presidium 2 mencatat masukan dari fraksi dan memimpin lobbying. Presidium 3 membuat notulensi dan merekap hasil sidang.",
+    "biro dana usaha danus struktur jabatan ukm seni musik 2026": "Kepala Biro: Arif Pranata Dewa. Sekretaris: Ulya Halimatussadiah. Bendahara: Nabila Meilani Putri. Anggota: Heru Kusdiaman.",
+    "biro dana usaha danus fungsi ukm seni musik 2026": "Menunjang setiap program kerja secara finansial, mencari dana secara aktif, dan menjadi wadah berwirausaha bagi anggota.",
+    "biro dana usaha danus fokus kegiatan ukm seni musik 2026": "Pengelolaan UKM Senmus Store, Market Product, dan pencarian Sponsorship.",
+    "biro komunikasi dan informasi kominfo struktur jabatan ukm seni musik 2026": "Kepala Biro: Lathifa Andini Suci Putri. Sekretaris: Citra Sari Dewi. Bendahara: Nafil Aksanjani. Anggota: Muhamad Bintang Arisandy, Arif Fauzan.",
+    "biro komunikasi dan informasi kominfo fungsi ukm seni musik 2026": "Membantu penyelenggaraan program UKM Seni Musik dari aspek komunikasi dan informasi.",
+    "biro komunikasi dan informasi kominfo fokus kegiatan ukm seni musik 2026": "Mengelola media sosial, membuat desain hari penting dan wisuda, serta mempublikasikan program kerja anggota.",
+    "biro sarana prasarana sarpras struktur jabatan ukm seni musik 2026": "Kepala Biro: Rio Drajat. Sekretaris: M. Rifki Yusria Hatta. Bendahara: M. Azwir Zeini. PJ Pengadaan: Vily M. Azhar. PJ Pemeliharaan: Faisal Azis Nugraha.",
+    "biro sarana prasarana sarpras fungsi ukm seni musik 2026": "Mengelola dan melakukan inventarisasi sarana prasarana program kerja di UKM Seni Musik.",
+    "biro sarana prasarana sarpras fokus kegiatan ukm seni musik 2026": "Pengadaan inventaris, kegiatan BERSEKA (beres-beres sekretariat), pembuatan modul, serta upgrading alat.",
+    "bidang kepelatihan struktur jabatan ukm seni musik 2026": "Kepala Bidang: Syechan Al Ghifari. Sekretaris: Deniar Agustin Suhar. Bendahara: Aeni Rizki Amalia. Lalu ada Surya Nugraha Putra (PJ Kepelatihan Rutin), Deniar Agustin Suhar (PJ OMBUS), Fachri Ridhwan (Konser Akbar), Aeni Rizki Amalia (PJ P3DB), Syechan Al Ghifari (PJ Pagelaran), Deana Zahra (PJ Perlombaan).",
+    "bidang kepelatihan fungsi ukm seni musik 2026": "Meningkatkan dan mengembangkan wawasan, keahlian teknis, serta musikalitas anggota UKM Seni Musik.",
+    "bidang event management struktur jabatan ukm seni musik 2026": "Kepala Bidang: Deni Jaelani. Sekretaris: Wanda Tryas Sifa. Bendahara: Hanifa Rahma Mutmainah. Anggota: M. Iqbal Nugraha, Gema Rais Akbar Pratama, Ikbal Rakhmatullah.",
+    "bidang event management fungsi ukm seni musik 2026": "Bertanggung jawab atas perencanaan event serta menjadi penghubung eksistensi UKM dengan dunia luar.",
+    "bidang event management program kerja ukm seni musik 2026": "Sabtu Seni, Managerial Event, Pojok Bersuara, PJ Talent, Lomba-lomba, dan pembuatan Katalog.",
+    "bidang dharma bakti struktur jabatan ukm seni musik 2026": "Ketua Bidang: Abib Zulmi. Sekretaris: Yesti Kamaliah. Bendahara: Rafi Ahnaf Hanafi. Anggota: Shinta Rosmayana.",
+    "bidang dharma bakti fungsi ukm seni musik 2026": "Meningkatkan kepedulian sosial, rasa empati, dan mengembangkan kontribusi nyata kepada masyarakat.",
+    "bidang dharma bakti program kerja ukm seni musik 2026": "Fund Box, Ngabdi, serta Kerja Sama Eksternal.",
+    "bidang keanggotaan struktur jabatan ukm seni musik 2026": "Kepala Bidang: Luthfi Awaludin. Sekretaris: Difa Khalda Auzini. Bendahara: Gina Nadyatunnisa. Anggota: Rengganis, Muhammad Salman Al Farisi.",
+    "bidang keanggotaan fungsi ukm seni musik 2026": "Pengkaderisasian, menghimpun data anggota, serta menumbuhkan solidaritas dan profesionalitas anggota.",
+    "bidang keanggotaan program kerja ukm seni musik 2026": "Pendidikan P3DB, Anniversary, Pengelolaan Data Anggota (PDA), dan Rangkul Anggota."
   },
   "group:120363421945585941@g.us": {
     "jadwal matkul(mata kuliah) kelas e": "📌 *SENIN* - Manpro Perangkat Lunak (08.41 - 10.20) {Auditorium} [Pak Reza] - Pemodelan & Simulasi (13.00 - 14.40) {FT1-2N} [Pak Eka] 📌 *SELASA* - Strategi Algoritma (07.30 - 08.40) {FT2-2A} [Pak Randi] - Jaringan Komputer (10:00 - 12.01) {FT1-2B} [Pak Rohmat] - Pemrogram WEB (13.00 - 15.30) {FT1-1E} [Pak Alam] - Analisis Numerik (16.21-18.01) {FT1-2N} [Bu Neng Ika] 📌 *RABU* - Pengembangan APK ber Platform (07.30 - 08.40) {FT1-2N} [Pak Hen Hen] 📌 *KAMIS* - Sistem Informasi (08.41 - 10.20) {FT1-2N} [Bu Siti] - Grafika Komputer (10.20 - 12.00) {Auditorium} [Pak Vega] - Praktikum Webprog 13.00-15.00 📌 *JUM'AT* - Sains Data (07.00 - 09.30) {Auditorium} [Bu Irani] - Praktikum Jarkom keterangan {ruangan}, [dosen], (waktu)",
@@ -30,5 +54,6 @@
   },
   "group:120363408747861746@g.us": {
     "matkul hari rabu": "1. sains data(09.00-11.00) 2. sistem informasi (12.00-13.00) 3. kalkulus(13.00-14.00)"
-  }
+  },
+  "global": {}
 }

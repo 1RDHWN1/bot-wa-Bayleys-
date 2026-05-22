@@ -260,6 +260,32 @@ export function listStoredFacts(scopeId) {
     .sort((a, b) => a.key.localeCompare(b.key));
 }
 
+export function listKnowledgeScopes() {
+  ensureLoaded();
+  return Object.keys(store || {}).sort();
+}
+
+export function exportKnowledgeSnapshot(scopeId = "") {
+  ensureLoaded();
+  ensureMetaLoaded();
+
+  const scope = String(scopeId || "").trim();
+  if (scope) {
+    return {
+      generatedAt: new Date().toISOString(),
+      scope,
+      data: { ...(store[scope] || {}) },
+      meta: { ...(metaStore[scope] || {}) }
+    };
+  }
+
+  return {
+    generatedAt: new Date().toISOString(),
+    data: store || {},
+    meta: metaStore || {}
+  };
+}
+
 export function buildFactsContext(scopeId, query = "", maxEntries = 8, maxChars = 1200) {
   const facts = listStoredFacts(scopeId);
   if (!facts.length) return "";
@@ -358,4 +384,32 @@ export function appendKnowledgeAudit(entry = {}) {
     ...entry
   };
   fs.appendFileSync(AUDIT_FILE, `${JSON.stringify(row)}\n`, "utf8");
+}
+
+export function readKnowledgeAudit({ scopeId = "", key = "", limit = 20 } = {}) {
+  ensureDataDir();
+  if (!fs.existsSync(AUDIT_FILE)) return [];
+
+  const targetScope = String(scopeId || "").trim();
+  const targetKey = normKey(key);
+  const max = Math.max(1, Math.min(100, Number(limit) || 20));
+
+  const rows = fs.readFileSync(AUDIT_FILE, "utf8")
+    .split(/\r?\n/)
+    .filter(Boolean)
+    .map(line => {
+      try {
+        return JSON.parse(line);
+      } catch {
+        return null;
+      }
+    })
+    .filter(Boolean)
+    .filter(row => {
+      if (targetScope && row.scope !== targetScope) return false;
+      if (targetKey && normKey(row.key || row.requestedKey) !== targetKey) return false;
+      return true;
+    });
+
+  return rows.slice(-max).reverse();
 }

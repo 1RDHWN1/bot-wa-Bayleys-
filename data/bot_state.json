@@ -1,8 +1,8 @@
 {
   "maintenance": {
-    "enabled": false,
-    "enabledAt": null,
-    "enabledBy": "",
-    "reason": ""
+    "enabled": true,
+    "enabledAt": 1779423358172,
+    "enabledBy": "99179921686567",
+    "reason": "add some feature"
   }
 }
