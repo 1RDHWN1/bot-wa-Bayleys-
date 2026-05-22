@@ -9,10 +9,19 @@ import path from "path";
 import sharp from "sharp";
 
 import { makeSticker } from "./sticker.js";
-import { askAI, clearAIHistory, getAIHistorySize } from "./ai.js";
+import {
+  askAI,
+  clearAIHistory,
+  getAIHistorySize,
+  getAIFeatureRedirect,
+  isAIKnowledgeMutationRequest,
+  extractKnowledgeFact,
+  extractKnowledgeMutation
+} from "./ai.js";
 import {
   setStoredFact,
   getStoredFact,
+  getStoredFactMeta,
   deleteStoredFact,
   listStoredFacts,
   buildFactsContext,
@@ -637,58 +646,132 @@ function getAIKnowledgeScopeId(jid) {
   return `private:${jid}`;
 }
 
+function normalizeKnowledgeScopeId(scopeId = "") {
+  const raw = String(scopeId || "").trim();
+  const m = raw.match(/^(group|private):(.+)$/i);
+  if (!m) return "";
+
+  const type = m[1].toLowerCase();
+  let target = m[2].trim();
+  if (!target) return "";
+
+  if (type === "group") {
+    if (!target.endsWith("@g.us")) target = `${target.replace(/[^0-9]/g, "")}@g.us`;
+    return target.replace(/^group:/i, "") ? `group:${target}` : "";
+  }
+
+  if (!target.includes("@")) target = `${normalizeJid(target)}@s.whatsapp.net`;
+  return target ? `private:${target}` : "";
+}
+
+function parseTargetKnowledgeScope(text = "", currentScopeId = "") {
+  const raw = String(text || "").trim();
+  if (!raw) {
+    return { scopeId: currentScopeId, input: raw, hasOverride: false };
+  }
+
+  const direct = raw.match(/^(?:di|ke|untuk|target)\s+(?:scope\s+)?((?:group|private):\S+)\s+([\s\S]+)$/i);
+  if (direct) {
+    const scopeId = normalizeKnowledgeScopeId(direct[1]);
+    return {
+      scopeId: scopeId || currentScopeId,
+      input: direct[2].trim(),
+      hasOverride: Boolean(scopeId),
+      error: scopeId ? "" : "Scope target tidak valid."
+    };
+  }
+
+  const group = raw.match(/^(?:di|ke|untuk|target)\s+(?:grup|group)\s+([0-9]+(?:@g\.us)?)\s+([\s\S]+)$/i);
+  if (group) {
+    const scopeId = normalizeKnowledgeScopeId(`group:${group[1]}`);
+    return {
+      scopeId: scopeId || currentScopeId,
+      input: group[2].trim(),
+      hasOverride: Boolean(scopeId),
+      error: scopeId ? "" : "JID grup target tidak valid."
+    };
+  }
+
+  return { scopeId: currentScopeId, input: raw, hasOverride: false };
+}
+
+function formatScopeLabel(scopeId = "") {
+  if (scopeId.startsWith("group:")) return `grup ${scopeId.slice("group:".length)}`;
+  if (scopeId.startsWith("private:")) return `private ${scopeId.slice("private:".length)}`;
+  return scopeId || "-";
+}
+
 function getFeatureRedirect(aiInput = "") {
-  const t = String(aiInput || "").toLowerCase();
-  const has = (...words) => words.some(w => t.includes(w));
+  return getAIFeatureRedirect(aiInput);
+}
 
-  if (has("cuaca", "weather", "hujan", "suhu", "prakiraan")) {
-    return "🌦️ Permintaan itu lebih pas pakai fitur cuaca bot.\nGunakan: `!cuaca <lokasi>`\nContoh: `!cuaca Tasikmalaya`";
+function normalizeKnowledgeLookup(text = "") {
+  return String(text || "")
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[^\p{L}\p{N}\s]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function tokenizeKnowledgeLookup(text = "") {
+  return Array.from(
+    new Set(
+      normalizeKnowledgeLookup(text)
+        .split(/\s+/)
+        .filter(token => token.length >= 3)
+    )
+  );
+}
+
+function resolveStoredFactKey(scopeId, requestedKey = "") {
+  const cleaned = normalizeKnowledgeLookup(requestedKey);
+  const facts = listStoredFacts(scopeId);
+
+  if (!cleaned || !facts.length) {
+    return { key: String(requestedKey || "").trim().toLowerCase(), found: false, ambiguous: false };
   }
 
-  if (has("tiktok.com", "video tiktok", "download tiktok")) {
-    return "🎵 Untuk TikTok, pakai downloader bot.\nGunakan: `!tt <url_tiktok>`";
+  const exact = facts.find(item => normalizeKnowledgeLookup(item.key) === cleaned);
+  if (exact) {
+    return { key: exact.key, value: exact.value, found: true, ambiguous: false, score: 999 };
   }
 
-  if (has("instagram.com", "download instagram", "video instagram", "reels")) {
-    return "📸 Untuk Instagram, pakai downloader bot.\nGunakan: `!ig <url_instagram>`";
+  const tokens = tokenizeKnowledgeLookup(cleaned);
+  const scored = facts
+    .map(item => {
+      const keyNorm = normalizeKnowledgeLookup(item.key);
+      const valueNorm = normalizeKnowledgeLookup(item.value);
+      let score = 0;
+
+      if (keyNorm.includes(cleaned) || cleaned.includes(keyNorm)) score += 8;
+      for (const token of tokens) {
+        if (keyNorm.split(/\s+/).includes(token)) score += 4;
+        else if (keyNorm.includes(token)) score += 2;
+        else if (valueNorm.includes(token)) score += 1;
+      }
+
+      return { ...item, score };
+    })
+    .filter(item => item.score > 0)
+    .sort((a, b) => b.score - a.score);
+
+  if (!scored.length || scored[0].score < 3) {
+    return { key: String(requestedKey || "").trim().toLowerCase(), found: false, ambiguous: false };
   }
 
-  if (
-    has("youtube", "yt", "lagu youtube", "audio youtube", "mp3 youtube") &&
-    has("download", "ambil", "convert", "mp3", "audio", "lagu")
-  ) {
-    return "🎧 Untuk audio YouTube, pakai fitur bot:\n• `!yt <watch_url>` (pilih audio/video)\n• `!musik <judul lagu>` (rekomendasi)\n• `!yta <watch_url>`\n• `!ytsearch <judul lagu>`";
-  }
+  const top = scored[0];
+  const runnerUp = scored[1];
+  const ambiguous = Boolean(runnerUp && runnerUp.score >= top.score && normalizeKnowledgeLookup(runnerUp.key) !== normalizeKnowledgeLookup(top.key));
 
-  if (has("cari youtube", "search youtube", "ytsearch", "video youtube")) {
-    return "🔎 Untuk cari video YouTube, gunakan: `!ytsearch <kata_kunci>`";
-  }
-
-  if (has("gambar", "image", "foto", "carikan gambar", "cari gambar")) {
-    return "🖼️ Untuk gambar, pakai fitur bot:\nGunakan: `!gambar <kata_kunci>`";
-  }
-
-  if (has("stiker", "sticker", "jadi stiker", "buat stiker")) {
-    return "🧩 Untuk bikin stiker, reply gambar/video lalu kirim: `!stiker`";
-  }
-
-  if (has("toimg", "ubah stiker", "stiker ke gambar", "convert stiker")) {
-    return "🔄 Untuk ubah stiker ke gambar, reply stikernya lalu kirim: `!toimg`";
-  }
-
-  if (has("tts", "voice note", "suara", "text to speech")) {
-    return "🎙️ Untuk voice note dari teks, pakai: `!suara <teks>`";
-  }
-
-  if (has("status bot", "cek status", "ping bot", "latency bot")) {
-    return "📊 Untuk cek status bot, gunakan: `!status` atau `!ping`";
-  }
-
-  if (has("fitur bot", "menu bot", "help bot", "daftar command")) {
-    return "📌 Untuk lihat semua fitur, gunakan: `!menu` atau `!help`";
-  }
-
-  return null;
+  return {
+    key: top.key,
+    value: top.value,
+    found: true,
+    ambiguous,
+    score: top.score,
+    alternatives: scored.slice(0, 3).map(item => item.key)
+  };
 }
 
 function isValidImageBuffer(buffer) {
@@ -2448,21 +2531,81 @@ if (command === "ai") {
   }
 
   const conversationId = getAIConversationId(jid, sender);
-  const knowledgeScopeId = getAIKnowledgeScopeId(jid);
+  const currentKnowledgeScopeId = getAIKnowledgeScopeId(jid);
   const ownerIds = parseOwnerIds(sock);
   const senderIds = await getSenderIds(sock, msg);
   const isOwner = msg.key.fromMe || senderIds.some(id => ownerIds.has(id));
   const canEditKnowledge = isOwner || hasKnowledgeEditAccess(senderIds);
   const ownerNum = Array.from(ownerIds)[0] || "";
   const senderNum = senderIds[0] || normalizeJid(sender);
-  const aiInput = input.trim();
+  const targetScope = parseTargetKnowledgeScope(input, currentKnowledgeScopeId);
+
+  if (targetScope.error) {
+    logFail(`ai target scope invalid: ${targetScope.error}`);
+    return reply(sock, msg, `❗ ${targetScope.error}\nContoh: \`!ai untuk group:120xxx@g.us simpen data jadwal = Jumat\``);
+  }
+
+  if (targetScope.hasOverride && !isOwner) {
+    logFail("ai target scope ditolak: bukan owner");
+    return reply(sock, msg, "🔒 Hanya owner/developer yang bisa mengubah data chat/grup lain.");
+  }
+
+  const knowledgeScopeId = targetScope.scopeId;
+  const aiInput = targetScope.input.trim();
   const aiCmd = aiInput.toLowerCase();
+  const scopeSuffix = targetScope.hasOverride ? `\nScope: ${formatScopeLabel(knowledgeScopeId)}` : "";
 
   if (aiCmd === "reset" || aiCmd === "clear") {
     const prevTurns = Math.ceil(getAIHistorySize(conversationId) / 2);
     clearAIHistory(conversationId);
     logOk(`ai reset, turn=${prevTurns}`);
     return reply(sock, msg, `🧹 Memory percakapan AI direset (${prevTurns} turn dihapus).`);
+  }
+
+  if (aiCmd === "scope" || aiCmd === "scope id" || aiCmd === "data scope") {
+    logOk("ai scope");
+    return reply(
+      sock,
+      msg,
+      `📌 Scope data chat ini:\n\`${currentKnowledgeScopeId}\`\n\nOwner bisa target scope lain:\n\`!ai untuk group:<jid_grup> simpen data kunci = nilai\``
+    );
+  }
+
+  if (
+    aiCmd === "grup list" ||
+    aiCmd === "group list" ||
+    aiCmd === "list grup" ||
+    aiCmd === "list group"
+  ) {
+    if (!isOwner) {
+      logFail("ai grup list ditolak: bukan owner");
+      return reply(sock, msg, "🔒 Hanya owner/developer yang bisa melihat daftar scope grup.");
+    }
+
+    try {
+      const groups = await sock.groupFetchAllParticipating();
+      const rows = Object.values(groups || {})
+        .map(group => ({
+          id: group?.id || "",
+          subject: String(group?.subject || "-").trim() || "-"
+        }))
+        .filter(group => group.id)
+        .sort((a, b) => a.subject.localeCompare(b.subject))
+        .slice(0, 30)
+        .map((group, idx) => `${idx + 1}. ${group.subject}\n   group:${group.id}`);
+
+      logOk(`ai grup list total=${rows.length}`);
+      return reply(
+        sock,
+        msg,
+        rows.length
+          ? `📚 *Scope Grup Tersedia*\n${rows.join("\n")}${Object.keys(groups || {}).length > 30 ? "\n..." : ""}`
+          : "📚 Bot belum mendeteksi grup yang bisa ditampilkan."
+      );
+    } catch (err) {
+      logFail(`ai grup list gagal: ${getErrorMessage(err)}`);
+      return reply(sock, msg, "❌ Gagal mengambil daftar grup.");
+    }
   }
 
   if (aiCmd === "editor list" || aiCmd === "list editor") {
@@ -2692,7 +2835,7 @@ if (command === "ai") {
     const facts = listStoredFacts(knowledgeScopeId);
     if (!facts.length) {
       logFail("data list kosong");
-      return reply(sock, msg, "📚 Belum ada data tersimpan di chat ini.");
+      return reply(sock, msg, `📚 Belum ada data tersimpan di scope ini.${scopeSuffix}`);
     }
 
     const lines = facts
@@ -2704,11 +2847,19 @@ if (command === "ai") {
     return reply(
       sock,
       msg,
-      `📚 *Data Tersimpan (${facts.length})*\n${lines}${facts.length > 30 ? "\n..." : ""}`
+      `📚 *Data Tersimpan (${facts.length})*${scopeSuffix}\n${lines}${facts.length > 30 ? "\n..." : ""}`
     );
   }
 
-  if (aiCmd.startsWith("simpan ") || aiCmd.startsWith("save ") || aiCmd.startsWith("ingat ")) {
+  if (
+    aiCmd.startsWith("simpan ") ||
+    aiCmd.startsWith("simpen ") ||
+    aiCmd.startsWith("save ") ||
+    aiCmd.startsWith("ingat ") ||
+    aiCmd.startsWith("inget ") ||
+    aiCmd.startsWith("catat ") ||
+    aiCmd.startsWith("catet ")
+  ) {
     if (!canEditKnowledge) {
       logFail("simpan data ditolak: tanpa akses");
       return reply(
@@ -2718,7 +2869,9 @@ if (command === "ai") {
       );
     }
 
-    const payload = aiInput.replace(/^(simpan|save|ingat)\s+/i, "").trim();
+    const payload = aiInput
+      .replace(/^(simpan|simpen|save|ingat|inget|catat|catet|catetin)\s+/i, "")
+      .trim();
     const eqIndex = payload.indexOf("=");
     const colonIndex = payload.indexOf(":");
     let cutIndex = -1;
@@ -2727,32 +2880,69 @@ if (command === "ai") {
     else if (eqIndex > 0) cutIndex = eqIndex;
     else if (colonIndex > 0) cutIndex = colonIndex;
 
-    if (cutIndex < 1) {
-      logFail("simpan data gagal: format salah");
-      return reply(sock, msg, "❗ Format salah.\nContoh: !ai simpan alamat kantor=Jl. Merdeka 10");
-    }
+    let key = "";
+    let value = "";
+    let source = "manual";
+    let confidence = 1;
 
-    const key = payload.slice(0, cutIndex).trim();
-    const value = payload.slice(cutIndex + 1).trim();
+    if (cutIndex < 1) {
+      const extracted = await extractKnowledgeFact(aiInput);
+      if (!extracted.shouldSave) {
+        logFail("simpan data gagal: ekstraksi kosong");
+        return reply(
+          sock,
+          msg,
+          "❗ Aku belum bisa nangkep data yang harus disimpan.\nContoh natural: `!ai ingat jadwal latihan = Jumat jam 19.00`\nAtau: `!ai catat bahwa jadwal latihan adalah Jumat jam 19.00`"
+        );
+      }
+
+      key = extracted.key;
+      value = extracted.value;
+      source = extracted.source === "ai" ? "ai-natural" : "heuristic";
+      confidence = extracted.confidence;
+    } else {
+      key = payload
+        .slice(0, cutIndex)
+        .replace(/^(data|bahwa)\s+/i, "")
+        .trim();
+      value = payload.slice(cutIndex + 1).trim();
+    }
 
     if (!key || !value) {
       logFail("simpan data gagal: key/value kosong");
       return reply(sock, msg, "❗ Kunci atau nilai kosong.");
     }
 
-    setStoredFact(knowledgeScopeId, key, value);
+    setStoredFact(knowledgeScopeId, key, value, {
+      updatedBy: senderNum || senderIds.join(", ") || "unknown",
+      actorIds: senderIds,
+      source,
+      confidence
+    });
     appendKnowledgeAudit({
-      action: "data_set",
+      action: source === "manual" ? "data_set" : "data_set_ai",
       actor: senderIds,
       scope: knowledgeScopeId,
       key: key.toLowerCase(),
-      value
+      value,
+      source,
+      confidence
     });
     logOk(`ai simpan key=${key.toLowerCase()}`);
-    return reply(sock, msg, `✅ Data disimpan:\n*${key.toLowerCase()}* = ${value}`);
+    return reply(
+      sock,
+      msg,
+      `✅ Data disimpan oleh *${senderNum || "-"}*${scopeSuffix}:\n*${key.toLowerCase()}* = ${value}`
+    );
   }
 
-  if (aiCmd.startsWith("hapus ") || aiCmd.startsWith("delete ") || aiCmd.startsWith("del ")) {
+  if (
+    aiCmd.startsWith("hapus ") ||
+    aiCmd.startsWith("apusin ") ||
+    aiCmd.startsWith("hapuskan ") ||
+    aiCmd.startsWith("delete ") ||
+    aiCmd.startsWith("del ")
+  ) {
     if (!canEditKnowledge) {
       logFail("hapus data ditolak: tanpa akses");
       return reply(
@@ -2762,26 +2952,39 @@ if (command === "ai") {
       );
     }
 
-    const key = aiInput.replace(/^(hapus|delete|del)\s+/i, "").trim();
+    const key = aiInput
+      .replace(/^(hapus|apusin|hapuskan|delete|del)\s+/i, "")
+      .replace(/^(data|tentang)\s+/i, "")
+      .trim();
     if (!key) {
       logFail("hapus data gagal: key kosong");
       return reply(sock, msg, "❗ Contoh: !ai hapus alamat kantor");
     }
 
-    const deleted = deleteStoredFact(knowledgeScopeId, key);
+    const resolved = resolveStoredFactKey(knowledgeScopeId, key);
+    if (resolved.ambiguous) {
+      return reply(
+        sock,
+        msg,
+        `❗ Data yang mau dihapus masih ambigu.\nCoba pakai salah satu:\n${resolved.alternatives.map(item => `• ${item}`).join("\n")}`
+      );
+    }
+
+    const deleted = resolved.found ? deleteStoredFact(knowledgeScopeId, resolved.key) : false;
     appendKnowledgeAudit({
       action: "data_del",
       actor: senderIds,
       scope: knowledgeScopeId,
-      key: key.toLowerCase(),
+      key: resolved.found ? resolved.key : key.toLowerCase(),
+      requestedKey: key.toLowerCase(),
       deleted
     });
-    logOk(`ai hapus key=${key.toLowerCase()} deleted=${deleted}`);
+    logOk(`ai hapus key=${key.toLowerCase()} resolved=${resolved.key} deleted=${deleted}`);
     return reply(
       sock,
       msg,
       deleted
-        ? `🗑️ Data *${key.toLowerCase()}* dihapus.`
+        ? `🗑️ Data *${resolved.key}* dihapus.${scopeSuffix}`
         : `❌ Data *${key.toLowerCase()}* tidak ditemukan.`
     );
   }
@@ -2792,7 +2995,7 @@ if (command === "ai") {
       const facts = listStoredFacts(knowledgeScopeId);
       if (!facts.length) {
         logFail("ai data list kosong");
-        return reply(sock, msg, "📚 Belum ada data tersimpan di chat ini.");
+        return reply(sock, msg, `📚 Belum ada data tersimpan di scope ini.${scopeSuffix}`);
       }
 
       const lines = facts
@@ -2804,7 +3007,7 @@ if (command === "ai") {
       return reply(
         sock,
         msg,
-        `📚 *Data Tersimpan (${facts.length})*\n${lines}${facts.length > 30 ? "\n..." : ""}`
+        `📚 *Data Tersimpan (${facts.length})*${scopeSuffix}\n${lines}${facts.length > 30 ? "\n..." : ""}`
       );
     }
 
@@ -2815,7 +3018,125 @@ if (command === "ai") {
     }
 
     logOk(`ai data key=${key.toLowerCase()}`);
-    return reply(sock, msg, `📌 *${key.toLowerCase()}* = ${value}`);
+    const meta = getStoredFactMeta(knowledgeScopeId, key);
+    const metaLine = meta?.updatedBy
+      ? `\n📝 Diupdate oleh: ${meta.updatedBy}${meta.updatedAt ? `\n⏱️ ${meta.updatedAt}` : ""}`
+      : "";
+    return reply(sock, msg, `📌 *${key.toLowerCase()}* = ${value}${metaLine}${scopeSuffix}`);
+  }
+
+  if (isAIKnowledgeMutationRequest(aiInput)) {
+    if (!canEditKnowledge) {
+      logFail("mutasi data natural ditolak: tanpa akses");
+      return reply(
+        sock,
+        msg,
+        `🔒 Aku paham kamu mau mengubah data, tapi hanya owner/editor yang boleh.\nID kamu terdeteksi: ${senderIds.join(", ") || "-"}\nMinta owner pakai: !ai editor add <id>`
+      );
+    }
+
+    const existingFacts = listStoredFacts(knowledgeScopeId);
+    const mutation = await extractKnowledgeMutation(aiInput, existingFacts.map(item => item.key));
+
+    if (mutation.action === "none") {
+      logFail("mutasi data natural gagal: ekstraksi kosong");
+      return reply(
+        sock,
+        msg,
+        "❗ Aku paham kamu mau mengubah data, tapi instruksinya masih kurang jelas.\nContoh:\n• `!ai ganti data jadwal latihan jadi Jumat jam 19.00`\n• `!ai hapus data jadwal latihan`"
+      );
+    }
+
+    if (mutation.action === "delete") {
+      const resolved = resolveStoredFactKey(knowledgeScopeId, mutation.key);
+
+      if (resolved.ambiguous) {
+        return reply(
+          sock,
+          msg,
+          `❗ Data yang mau dihapus masih ambigu.\nCoba pakai salah satu:\n${resolved.alternatives.map(item => `• ${item}`).join("\n")}`
+        );
+      }
+
+      if (!resolved.found) {
+        logFail(`hapus data natural gagal: key tidak ditemukan ${mutation.key}`);
+        return reply(sock, msg, `❌ Data *${mutation.key}* tidak ditemukan.`);
+      }
+
+      const deleted = deleteStoredFact(knowledgeScopeId, resolved.key);
+      appendKnowledgeAudit({
+        action: "data_del_ai",
+        actor: senderIds,
+        scope: knowledgeScopeId,
+        key: resolved.key,
+        requestedKey: mutation.key,
+        deleted,
+        source: mutation.source,
+        confidence: mutation.confidence,
+        rawInput: aiInput
+      });
+
+      logOk(`ai hapus natural key=${resolved.key} deleted=${deleted}`);
+      return reply(
+        sock,
+        msg,
+        deleted
+          ? `🗑️ Data *${resolved.key}* dihapus oleh *${senderNum || "-"}*.`
+            + scopeSuffix
+          : `❌ Data *${resolved.key}* gagal dihapus.`
+      );
+    }
+
+    const wantsExisting = /^(ai|bot|botnya|min|admin)?[,\s:.-]*(tolong\s+)?(ganti|gantiin|ubah|ubahin|rubah|update|perbarui|perbaharui|edit|revisi)\s+(data\s+)?/i.test(aiInput);
+    const resolved = resolveStoredFactKey(knowledgeScopeId, mutation.key);
+
+    if (resolved.ambiguous) {
+      return reply(
+        sock,
+        msg,
+        `❗ Data yang mau diganti masih ambigu.\nCoba pakai salah satu:\n${resolved.alternatives.map(item => `• ${item}`).join("\n")}`
+      );
+    }
+
+    if (wantsExisting && !resolved.found) {
+      logFail(`ganti data natural gagal: key tidak ditemukan ${mutation.key}`);
+      return reply(
+        sock,
+        msg,
+        `❌ Data *${mutation.key}* belum ada, jadi aku belum berani menggantinya.\nKalau mau tambah baru, pakai: \`!ai catat bahwa ${mutation.key} adalah ${mutation.value}\``
+      );
+    }
+
+    const keyToSave = resolved.found ? resolved.key : mutation.key;
+    const oldValue = resolved.found ? resolved.value : null;
+
+    setStoredFact(knowledgeScopeId, keyToSave, mutation.value, {
+      updatedBy: senderNum || senderIds.join(", ") || "unknown",
+      actorIds: senderIds,
+      source: mutation.source === "ai" ? "ai-natural" : "heuristic",
+      confidence: mutation.confidence
+    });
+    appendKnowledgeAudit({
+      action: oldValue == null ? "data_set_ai" : "data_update_ai",
+      actor: senderIds,
+      scope: knowledgeScopeId,
+      key: keyToSave,
+      requestedKey: mutation.key,
+      oldValue,
+      value: mutation.value,
+      source: mutation.source,
+      confidence: mutation.confidence,
+      rawInput: aiInput
+    });
+
+    logOk(`ai mutasi natural action=set key=${keyToSave}`);
+    return reply(
+      sock,
+      msg,
+      oldValue == null
+        ? `✅ Data disimpan oleh *${senderNum || "-"}*${scopeSuffix}:\n*${keyToSave}* = ${mutation.value}`
+        : `✅ Data diganti oleh *${senderNum || "-"}*${scopeSuffix}:\n*${keyToSave}*\nSebelumnya: ${oldValue}\nSekarang: ${mutation.value}`
+    );
   }
 
   const featureRedirect = getFeatureRedirect(aiInput);

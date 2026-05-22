@@ -3,10 +3,12 @@ import path from "path";
 
 const DATA_DIR = path.resolve("./data");
 const DATA_FILE = path.join(DATA_DIR, "knowledge.json");
+const META_FILE = path.join(DATA_DIR, "knowledge_meta.json");
 const ACL_FILE = path.join(DATA_DIR, "knowledge_acl.json");
 const AUDIT_FILE = path.join(DATA_DIR, "knowledge_audit.log");
 
 let store = null;
+let metaStore = null;
 let aclStore = null;
 
 function ensureLoaded() {
@@ -29,6 +31,28 @@ function persist() {
   const tempFile = `${DATA_FILE}.tmp`;
   fs.writeFileSync(tempFile, JSON.stringify(store, null, 2), "utf8");
   fs.renameSync(tempFile, DATA_FILE);
+}
+
+function ensureMetaLoaded() {
+  if (metaStore) return;
+
+  try {
+    const raw = fs.readFileSync(META_FILE, "utf8");
+    const parsed = JSON.parse(raw);
+    metaStore = parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    metaStore = {};
+  }
+}
+
+function persistMeta() {
+  if (!fs.existsSync(DATA_DIR)) {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+  }
+
+  const tempFile = `${META_FILE}.tmp`;
+  fs.writeFileSync(tempFile, JSON.stringify(metaStore, null, 2), "utf8");
+  fs.renameSync(tempFile, META_FILE);
 }
 
 function ensureAclLoaded() {
@@ -73,6 +97,64 @@ function normUserId(userId) {
   return String(userId || "").replace(/[^0-9]/g, "");
 }
 
+const SEARCH_STOPWORDS = new Set([
+  "aku",
+  "apa",
+  "atau",
+  "bagaimana",
+  "bagi",
+  "buat",
+  "bisa",
+  "boleh",
+  "cara",
+  "dalam",
+  "dan",
+  "dari",
+  "dengan",
+  "di",
+  "dong",
+  "itu",
+  "jadi",
+  "kalau",
+  "kan",
+  "kapan",
+  "ke",
+  "lagi",
+  "mau",
+  "mohon",
+  "nya",
+  "pada",
+  "pakai",
+  "saja",
+  "sama",
+  "saya",
+  "sebutkan",
+  "siapa",
+  "tolong",
+  "untuk",
+  "yang"
+]);
+
+function normalizeSearchText(text) {
+  return String(text || "")
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[^\p{L}\p{N}\s]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function stemToken(token) {
+  let t = String(token || "").toLowerCase();
+  for (const suffix of ["nya", "kan", "lah", "pun"]) {
+    if (t.length > suffix.length + 3 && t.endsWith(suffix)) {
+      t = t.slice(0, -suffix.length);
+      break;
+    }
+  }
+  return t;
+}
+
 function getScopeData(scopeId) {
   ensureLoaded();
   const scope = normScope(scopeId);
@@ -84,19 +166,32 @@ function getScopeData(scopeId) {
   return store[scope];
 }
 
-function tokenize(text) {
-  return Array.from(
-    new Set(
-      String(text || "")
-        .toLowerCase()
-        .replace(/[^a-z0-9\s]/g, " ")
-        .split(/\s+/)
-        .filter(token => token.length >= 3)
-    )
-  );
+function getScopeMeta(scopeId) {
+  ensureMetaLoaded();
+  const scope = normScope(scopeId);
+
+  if (!metaStore[scope] || typeof metaStore[scope] !== "object") {
+    metaStore[scope] = {};
+  }
+
+  return metaStore[scope];
 }
 
-export function setStoredFact(scopeId, key, value) {
+function tokenize(text) {
+  const tokens = new Set();
+  for (const raw of normalizeSearchText(text).split(/\s+/)) {
+    if (raw.length < 3 || SEARCH_STOPWORDS.has(raw)) continue;
+    tokens.add(raw);
+
+    const stemmed = stemToken(raw);
+    if (stemmed.length >= 3 && !SEARCH_STOPWORDS.has(stemmed)) {
+      tokens.add(stemmed);
+    }
+  }
+  return Array.from(tokens);
+}
+
+export function setStoredFact(scopeId, key, value, meta = {}) {
   const k = normKey(key);
   const v = String(value || "").trim();
 
@@ -106,6 +201,15 @@ export function setStoredFact(scopeId, key, value) {
   const scopeData = getScopeData(scopeId);
   scopeData[k] = v;
   persist();
+
+  const scopeMeta = getScopeMeta(scopeId);
+  const prev = scopeMeta[k] && typeof scopeMeta[k] === "object" ? scopeMeta[k] : {};
+  scopeMeta[k] = {
+    ...prev,
+    ...meta,
+    updatedAt: new Date().toISOString()
+  };
+  persistMeta();
 
   return { key: k, value: v };
 }
@@ -117,6 +221,13 @@ export function getStoredFact(scopeId, key) {
   return scopeData[k] || null;
 }
 
+export function getStoredFactMeta(scopeId, key) {
+  const k = normKey(key);
+  if (!k) return null;
+  const scopeMeta = getScopeMeta(scopeId);
+  return scopeMeta[k] || null;
+}
+
 export function deleteStoredFact(scopeId, key) {
   const k = normKey(key);
   if (!k) return false;
@@ -126,12 +237,19 @@ export function deleteStoredFact(scopeId, key) {
   if (!(k in scopeData)) return false;
 
   delete scopeData[k];
+  const scopeMeta = getScopeMeta(scope);
+  delete scopeMeta[k];
 
   if (Object.keys(scopeData).length === 0) {
     delete store[scope];
   }
 
+  if (Object.keys(scopeMeta).length === 0) {
+    delete metaStore[scope];
+  }
+
   persist();
+  persistMeta();
   return true;
 }
 
@@ -148,8 +266,15 @@ export function buildFactsContext(scopeId, query = "", maxEntries = 8, maxChars 
 
   const tokens = tokenize(query);
   const withScore = facts.map(item => {
-    const hay = `${item.key} ${item.value}`.toLowerCase();
-    const score = tokens.reduce((acc, token) => (hay.includes(token) ? acc + 1 : acc), 0);
+    const key = normalizeSearchText(item.key);
+    const value = normalizeSearchText(item.value);
+    const hay = `${key} ${value}`;
+    const score = tokens.reduce((acc, token) => {
+      if (key === token || key.includes(` ${token} `)) return acc + 4;
+      if (key.includes(token)) return acc + 3;
+      if (value.includes(token)) return acc + 1;
+      return acc;
+    }, 0);
     return { ...item, score };
   });
 
@@ -158,15 +283,16 @@ export function buildFactsContext(scopeId, query = "", maxEntries = 8, maxChars 
     return a.key.localeCompare(b.key);
   });
 
-  const selected = sorted
-    .filter((item, idx) => item.score > 0 || (tokens.length === 0 && idx < maxEntries))
+  const source = (tokens.length === 0 ? sorted : sorted.filter(item => item.score > 0))
     .slice(0, maxEntries);
-
-  const source = selected.length ? selected : sorted.slice(0, maxEntries);
+  if (!source.length) return "";
 
   let output = "";
+  const scopeMeta = getScopeMeta(scopeId);
   for (const item of source) {
-    const line = `- ${item.key}: ${item.value}\n`;
+    const meta = scopeMeta[item.key] || {};
+    const by = meta.updatedBy ? ` (diupdate oleh ${meta.updatedBy})` : "";
+    const line = `- ${item.key}: ${item.value}${by}\n`;
     if ((output + line).length > maxChars) break;
     output += line;
   }
