@@ -1,1 +1,14 @@
-{}
+{
+  "group:120363408747861746@g.us": {
+    "matkul hari rabu": {
+      "updatedBy": "175351116353700",
+      "actorIds": [
+        "175351116353700",
+        "6281227154028"
+      ],
+      "source": "manual",
+      "confidence": 1,
+      "updatedAt": "2026-05-22T03:45:06.172Z"
+    }
+  }
+}

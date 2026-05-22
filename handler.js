@@ -2584,23 +2584,53 @@ if (command === "ai") {
 
     try {
       const groups = await sock.groupFetchAllParticipating();
-      const rows = Object.values(groups || {})
+      const groupRows = Object.values(groups || {})
         .map(group => ({
           id: group?.id || "",
           subject: String(group?.subject || "-").trim() || "-"
         }))
         .filter(group => group.id)
-        .sort((a, b) => a.subject.localeCompare(b.subject))
-        .slice(0, 30)
-        .map((group, idx) => `${idx + 1}. ${group.subject}\n   group:${group.id}`);
+        .sort((a, b) => a.subject.localeCompare(b.subject));
 
-      logOk(`ai grup list total=${rows.length}`);
+      if (!groupRows.length) {
+        logOk("ai grup list kosong");
+        return reply(sock, msg, "📚 Bot belum mendeteksi grup yang bisa ditampilkan.");
+      }
+
+      const generatedAt = new Date().toLocaleString("id-ID", {
+        timeZone: "Asia/Jakarta",
+        dateStyle: "medium",
+        timeStyle: "medium"
+      });
+      const lines = groupRows.map((group, idx) => [
+        `${idx + 1}. ${group.subject}`,
+        `   scope: group:${group.id}`,
+        `   contoh: !ai untuk group:${group.id} data list`
+      ].join("\n"));
+      const fileText = [
+        "DAFTAR SCOPE GRUP WHATSAPP",
+        `Total: ${groupRows.length}`,
+        `Dibuat: ${generatedAt} WIB`,
+        "",
+        "Pakai scope ini untuk target data grup lain:",
+        "!ai untuk group:<jid_grup> simpen data kunci = nilai",
+        "!ai untuk group:<jid_grup> data list",
+        "!ai untuk group:<jid_grup> gantiin data kunci jadi nilai baru",
+        "!ai untuk group:<jid_grup> hapus data kunci",
+        "",
+        lines.join("\n\n")
+      ].join("\n");
+
+      logOk(`ai grup list total=${groupRows.length} as document`);
       return reply(
         sock,
         msg,
-        rows.length
-          ? `📚 *Scope Grup Tersedia*\n${rows.join("\n")}${Object.keys(groups || {}).length > 30 ? "\n..." : ""}`
-          : "📚 Bot belum mendeteksi grup yang bisa ditampilkan."
+        {
+          document: Buffer.from(fileText, "utf8"),
+          fileName: "scope-grup-whatsapp.txt",
+          mimetype: "text/plain",
+          caption: `📎 Daftar scope grup dikirim sebagai file.\nTotal: ${groupRows.length} grup.`
+        }
       );
     } catch (err) {
       logFail(`ai grup list gagal: ${getErrorMessage(err)}`);
