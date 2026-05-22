@@ -13,6 +13,10 @@ session/
 tmp/
 temp/
 
+# Bot runtime data (server/local state)
+data/*.json
+data/*.tmp
+
 # Cookies / secrets from downloader tools
 cookies.txt
 
