@@ -20,6 +20,7 @@ const RARITY_WEIGHT = {
   legendary: Number(process.env.SPIN_WEIGHT_LEGENDARY || 1.7),
   mythic: Number(process.env.SPIN_WEIGHT_MYTHIC || 0.3)
 };
+const ADAPTIVE_RARITY_WEIGHT = process.env.SPIN_ADAPTIVE_RARITY !== "0";
 
 const RARITY_LABEL = {
   common: "Common",
@@ -500,6 +501,21 @@ async function getHybridPool(logWarn, forceSync = false) {
 }
 
 function pickWeightedCharacter(pool) {
+  if (!Array.isArray(pool) || pool.length === 0) return null;
+
+  const rarityCount = {
+    common: 0,
+    rare: 0,
+    epic: 0,
+    legendary: 0,
+    mythic: 0
+  };
+
+  for (const item of pool) {
+    const rarity = sanitizeRarity(item?.rarity);
+    rarityCount[rarity] += 1;
+  }
+
   const safeWeight = rarity => {
     const w = Number(RARITY_WEIGHT[rarity] || 0);
     if (!Number.isFinite(w) || w <= 0) return 0.01;
@@ -508,7 +524,13 @@ function pickWeightedCharacter(pool) {
 
   const weighted = pool.map(item => ({
     ...item,
-    weight: safeWeight(item.rarity)
+    weight: (() => {
+      const rarity = sanitizeRarity(item?.rarity);
+      const baseWeight = safeWeight(rarity);
+      if (!ADAPTIVE_RARITY_WEIGHT) return baseWeight;
+      const count = rarityCount[rarity] || 1;
+      return baseWeight / count;
+    })()
   }));
   const total = weighted.reduce((acc, item) => acc + item.weight, 0);
   if (total <= 0) return null;
@@ -650,6 +672,27 @@ export function createGameCommands(deps) {
   } = deps;
   const logOk = makeOkLogger(logCommandResult);
   const logFail = makeFailLogger(logCommandResult);
+
+  async function showSpinHelp(ctx) {
+    const isOwner = await hasOwnerAccess(ctx);
+    const ownerLines = isOwner
+      ? "\n\n👑 *Owner Sync*\n• !spin sync status\n• !spin sync top\n• !spin sync full\n• !spin sync step <jumlah_page>"
+      : "";
+
+    logOk(ctx, "spin help");
+    return ctx.reply(
+      ctx.sock,
+      ctx.msg,
+      `🎰 *SPIN COMMAND LIST*\n` +
+      `• !spin\n` +
+      `• !spin stats\n` +
+      `• !spin top\n` +
+      `• !koleksi\n` +
+      `• !spin whoami\n` +
+      `• !spin help\n` +
+      `• !spin list${ownerLines}`
+    );
+  }
 
   function toCanonicalPhoneId(raw = "") {
     const id = normalizeJid(raw || "");
@@ -965,6 +1008,9 @@ export function createGameCommands(deps) {
         const subLower = sub.toLowerCase();
 
         if (!sub) return runSpin(ctx);
+        if (subLower === "help" || subLower === "list" || subLower === "menu" || subLower === "cmd") {
+          return showSpinHelp(ctx);
+        }
         if (subLower === "whoami") {
           const senderIds = await resolveSenderIds(ctx);
           const actorId = senderIds[0] || extractActorId(ctx) || "-";
@@ -984,11 +1030,7 @@ export function createGameCommands(deps) {
         }
 
         logFail(ctx, "spin subcommand invalid");
-        return ctx.reply(
-          ctx.sock,
-          ctx.msg,
-          "❗ Format:\n• !spin\n• !spin whoami\n• !spin stats\n• !spin top\n• !spin sync status (owner)\n• !spin sync top|full (owner)\n• !spin sync step <jumlah_page> (owner)"
-        );
+        return showSpinHelp(ctx);
       }
     },
     {
