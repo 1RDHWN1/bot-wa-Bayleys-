@@ -14,11 +14,11 @@ const HYBRID_SYNC_INTERVAL_MS = 12 * 60 * 60 * 1000;
 const NON_OWNER_DAILY_SPIN_LIMIT = clamp(process.env.SPIN_DAILY_LIMIT || 3, 1, 20);
 
 const RARITY_WEIGHT = {
-  common: 55,
-  rare: 25,
-  epic: 12,
-  legendary: 6,
-  mythic: 2
+  common: Number(process.env.SPIN_WEIGHT_COMMON || 72),
+  rare: Number(process.env.SPIN_WEIGHT_RARE || 20),
+  epic: Number(process.env.SPIN_WEIGHT_EPIC || 6),
+  legendary: Number(process.env.SPIN_WEIGHT_LEGENDARY || 1.7),
+  mythic: Number(process.env.SPIN_WEIGHT_MYTHIC || 0.3)
 };
 
 const RARITY_LABEL = {
@@ -84,10 +84,10 @@ function defaultValueForRarity(rarity) {
 
 function rarityFromFavorites(favorites = 0) {
   const n = Number(favorites) || 0;
-  if (n >= 50000) return "mythic";
-  if (n >= 15000) return "legendary";
-  if (n >= 5000) return "epic";
-  if (n >= 1500) return "rare";
+  if (n >= 150000) return "mythic";
+  if (n >= 50000) return "legendary";
+  if (n >= 15000) return "epic";
+  if (n >= 5000) return "rare";
   return "common";
 }
 
@@ -500,9 +500,15 @@ async function getHybridPool(logWarn, forceSync = false) {
 }
 
 function pickWeightedCharacter(pool) {
+  const safeWeight = rarity => {
+    const w = Number(RARITY_WEIGHT[rarity] || 0);
+    if (!Number.isFinite(w) || w <= 0) return 0.01;
+    return w;
+  };
+
   const weighted = pool.map(item => ({
     ...item,
-    weight: RARITY_WEIGHT[item.rarity] || 1
+    weight: safeWeight(item.rarity)
   }));
   const total = weighted.reduce((acc, item) => acc + item.weight, 0);
   if (total <= 0) return null;
