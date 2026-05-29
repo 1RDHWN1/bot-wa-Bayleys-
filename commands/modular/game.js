@@ -645,7 +645,8 @@ export function createGameCommands(deps) {
     normalizeJid,
     enforceRateLimit,
     logWarn,
-    parseOwnerIds
+    parseOwnerIds,
+    getSenderIds
   } = deps;
   const logOk = makeOkLogger(logCommandResult);
   const logFail = makeFailLogger(logCommandResult);
@@ -674,6 +675,27 @@ export function createGameCommands(deps) {
     return "";
   }
 
+  async function resolveSenderIds(ctx) {
+    const out = new Set();
+
+    const push = raw => {
+      const id = toCanonicalPhoneId(raw);
+      if (id) out.add(id);
+    };
+
+    if (typeof getSenderIds === "function") {
+      try {
+        const resolved = await getSenderIds(ctx.sock, ctx.msg);
+        for (const raw of resolved || []) push(raw);
+      } catch {
+        // ignore sender-id resolution failures
+      }
+    }
+
+    push(extractActorId(ctx));
+    return Array.from(out);
+  }
+
   async function hasOwnerAccess(ctx) {
     if (ctx?.msg?.key?.fromMe) return true;
 
@@ -682,21 +704,13 @@ export function createGameCommands(deps) {
       : new Set();
     if (!ownerIds.size) return false;
 
-    const actorId = extractActorId(ctx);
-    if (!actorId) return false;
-
-    const variants = new Set([actorId]);
-    if (actorId.startsWith("62") && actorId.length > 10) variants.add(`0${actorId.slice(2)}`);
-    if (actorId.startsWith("0") && actorId.length > 10) variants.add(`62${actorId.slice(1)}`);
-
-    for (const v of variants) {
-      if (ownerIds.has(v)) return true;
-    }
-    return false;
+    const senderIds = await resolveSenderIds(ctx);
+    return senderIds.some(id => ownerIds.has(id));
   }
 
   async function runSpin(ctx) {
-    const senderId = extractActorId(ctx) || normalizeJid(ctx.sender) || String(ctx.sender || "");
+    const senderIds = await resolveSenderIds(ctx);
+    const senderId = senderIds[0] || extractActorId(ctx) || normalizeJid(ctx.sender) || String(ctx.sender || "");
     if (!senderId) {
       logFail(ctx, "sender invalid");
       return ctx.reply(ctx.sock, ctx.msg, "❌ ID user tidak valid.");
@@ -726,7 +740,6 @@ export function createGameCommands(deps) {
     const user = getOrInitUser(state, senderId, displayName);
     const today = getJakartaDateKey();
     const usedToday = getDailySpinCount(user, today);
-    const remainingToday = Math.max(0, NON_OWNER_DAILY_SPIN_LIMIT - usedToday);
 
     if (!ownerAccess && usedToday >= NON_OWNER_DAILY_SPIN_LIMIT) {
       const resetInfo = getWibSpinResetInfo();
@@ -813,7 +826,8 @@ export function createGameCommands(deps) {
   }
 
   async function showSpinStats(ctx) {
-    const senderId = normalizeJid(ctx.sender) || String(ctx.sender || "");
+    const senderIds = await resolveSenderIds(ctx);
+    const senderId = senderIds[0] || extractActorId(ctx) || normalizeJid(ctx.sender) || String(ctx.sender || "");
     const state = loadSpinState();
     const user = getOrInitUser(state, senderId, ctx.msg?.pushName || senderId);
     const today = getJakartaDateKey();
@@ -872,7 +886,8 @@ export function createGameCommands(deps) {
   }
 
   async function showCollection(ctx) {
-    const senderId = normalizeJid(ctx.sender) || String(ctx.sender || "");
+    const senderIds = await resolveSenderIds(ctx);
+    const senderId = senderIds[0] || extractActorId(ctx) || normalizeJid(ctx.sender) || String(ctx.sender || "");
     const state = loadSpinState();
     const user = getOrInitUser(state, senderId, ctx.msg?.pushName || senderId);
     const pool = await getHybridPool(logWarn, false);
@@ -951,7 +966,8 @@ export function createGameCommands(deps) {
 
         if (!sub) return runSpin(ctx);
         if (subLower === "whoami") {
-          const actorId = extractActorId(ctx) || "-";
+          const senderIds = await resolveSenderIds(ctx);
+          const actorId = senderIds[0] || extractActorId(ctx) || "-";
           const isOwner = await hasOwnerAccess(ctx);
           logOk(ctx, `spin whoami actor=${actorId} owner=${isOwner}`);
           return ctx.reply(

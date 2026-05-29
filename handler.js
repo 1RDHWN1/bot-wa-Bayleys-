@@ -1041,8 +1041,12 @@ const {
 const ttsCooldown = new Map();
 const TTS_DELAY = 15_000; // 15 detik
 const MODULAR_PREFIX = process.env.BOT_PREFIX || "!";
-const MODULAR_OWNER_NUMBER = (process.env.OWNER_NUMBER || appConfig.ownerNumber || "")
-  .replace(/[^0-9]/g, "");
+const MODULAR_OWNER_NUMBER = (
+  String(process.env.OWNER_NUMBER || appConfig.ownerNumber || "")
+    .split(/[,\s]+/)
+    .map(normalizeJid)
+    .find(Boolean) || ""
+);
 
 const modularGuard = createAbuseGuard({
   maxInputLength: Math.max(1200, Number(appConfig.maxInputLength) || 1200),
