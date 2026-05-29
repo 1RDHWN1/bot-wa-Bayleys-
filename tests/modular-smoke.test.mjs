@@ -300,6 +300,10 @@ async function main() {
     ytsearchPick.replies.some(item => typeof item === "object" && item?.audio?.url === "audio.mp3")
   );
 
+  const spinStats = await runCommand(router, "!spin stats");
+  assert.equal(spinStats.handled, true);
+  assert.match(String(spinStats.replies[0] || ""), /SPIN STATS/i);
+
   console.log("Smoke modular commands: PASS");
 }
 

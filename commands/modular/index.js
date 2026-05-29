@@ -5,6 +5,7 @@ import { createScheduleCommands } from "./schedule.js";
 import { createAdminCommands } from "./admin.js";
 import { createAICommands } from "./ai.js";
 import { createLegacyMediaCommands } from "./legacy-media.js";
+import { createGameCommands } from "./game.js";
 import { createDownloaderReplyPassiveHandler } from "./passive/downloader-reply.js";
 
 export function createModularCommands(deps) {
@@ -15,6 +16,7 @@ export function createModularCommands(deps) {
     ...createScheduleCommands(deps),
     ...createAdminCommands(deps),
     ...createAICommands(deps),
+    ...createGameCommands(deps),
     ...createLegacyMediaCommands(deps)
   ];
 }

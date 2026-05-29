@@ -1,0 +1,22 @@
+[
+  { "id": "seed:naruto", "name": "Naruto Uzumaki", "series": "Naruto", "rarity": "epic", "value": 50 },
+  { "id": "seed:sasuke", "name": "Sasuke Uchiha", "series": "Naruto", "rarity": "epic", "value": 50 },
+  { "id": "seed:kakashi", "name": "Kakashi Hatake", "series": "Naruto", "rarity": "rare", "value": 20 },
+  { "id": "seed:luffy", "name": "Monkey D. Luffy", "series": "One Piece", "rarity": "legendary", "value": 100 },
+  { "id": "seed:zoro", "name": "Roronoa Zoro", "series": "One Piece", "rarity": "epic", "value": 50 },
+  { "id": "seed:nami", "name": "Nami", "series": "One Piece", "rarity": "rare", "value": 20 },
+  { "id": "seed:goku", "name": "Son Goku", "series": "Dragon Ball", "rarity": "legendary", "value": 100 },
+  { "id": "seed:vegeta", "name": "Vegeta", "series": "Dragon Ball", "rarity": "epic", "value": 50 },
+  { "id": "seed:gojo", "name": "Satoru Gojo", "series": "Jujutsu Kaisen", "rarity": "legendary", "value": 100 },
+  { "id": "seed:itadori", "name": "Yuji Itadori", "series": "Jujutsu Kaisen", "rarity": "rare", "value": 20 },
+  { "id": "seed:megumin", "name": "Megumin", "series": "KonoSuba", "rarity": "rare", "value": 20 },
+  { "id": "seed:asuna", "name": "Asuna Yuuki", "series": "Sword Art Online", "rarity": "rare", "value": 20 },
+  { "id": "seed:levi", "name": "Levi Ackerman", "series": "Attack on Titan", "rarity": "epic", "value": 50 },
+  { "id": "seed:eren", "name": "Eren Yeager", "series": "Attack on Titan", "rarity": "epic", "value": 50 },
+  { "id": "seed:mikasa", "name": "Mikasa Ackerman", "series": "Attack on Titan", "rarity": "rare", "value": 20 },
+  { "id": "seed:tanjiro", "name": "Tanjiro Kamado", "series": "Demon Slayer", "rarity": "epic", "value": 50 },
+  { "id": "seed:nezuko", "name": "Nezuko Kamado", "series": "Demon Slayer", "rarity": "rare", "value": 20 },
+  { "id": "seed:zenitsu", "name": "Zenitsu Agatsuma", "series": "Demon Slayer", "rarity": "common", "value": 8 },
+  { "id": "seed:frieren", "name": "Frieren", "series": "Sousou no Frieren", "rarity": "mythic", "value": 220 },
+  { "id": "seed:ai-hoshino", "name": "Ai Hoshino", "series": "Oshi no Ko", "rarity": "legendary", "value": 100 }
+]

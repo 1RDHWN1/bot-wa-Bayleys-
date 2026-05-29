@@ -384,7 +384,11 @@ function normalizeJid(jid = "") {
 
 function parseOwnerIds(sock) {
   const ids = new Set();
-  const envOwnerRaw = String(process.env.OWNER_NUMBER || "");
+  const envOwnerRaw = [
+    process.env.OWNER_NUMBER || "",
+    process.env.OWNER_ID || "",
+    process.env.OWNER_JID || ""
+  ].join(",");
 
   envOwnerRaw
     .split(/[,\s]+/)

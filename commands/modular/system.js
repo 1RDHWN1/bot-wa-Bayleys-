@@ -120,6 +120,22 @@ apabila ada fitur yang kurang stabil atau tidak berjalan sempurna.
 • !jadwal on <id>
 • !jadwal off <id>
 
+🎰 *Anime Lucky Spin* (Hybrid)
+• !spin
+  └ Spin karakter anime 1x per hari (WIB) + gambar karakter
+• !spin stats
+  └ Lihat poin, streak, dan status spin
+• !spin top
+  └ Leaderboard global poin spin
+• !koleksi
+  └ Lihat koleksi karakter kamu
+• !spin sync status
+  └ Cek status sinkronisasi hybrid (owner)
+• !spin sync top|full
+  └ Jalankan batch sinkronisasi bertahap (owner)
+• !spin sync step <jumlah_page>
+  └ Sinkronisasi manual sejumlah page (owner)
+
 
 🎧 YouTube
 • !yt <watch url>

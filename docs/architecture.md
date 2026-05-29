@@ -31,6 +31,11 @@
   - `hapus`
 - `commands/modular/ai.js`:
   - `ai` (eksekusi didelegasikan ke `commands/modular/ai-runtime.js`)
+- `commands/modular/game.js`:
+  - `spin` (hybrid anime gacha: local seed + API cache)
+    - sync bertahap paginated (`top/full`) dengan resume page di cache lokal
+    - hasil spin kirim gambar karakter jika tersedia
+  - `koleksi/collection/karakterku`
 - `commands/modular/legacy-media.js`:
   - `stiker/sticker`, `toimg/toimage`, `readviewonce/readviewone/rvo`
   - `ytsearch`, `musik/ymusic`, `yta`, `yt`, `tt`, `ig`
