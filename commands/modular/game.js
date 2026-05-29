@@ -676,7 +676,7 @@ export function createGameCommands(deps) {
   async function showSpinHelp(ctx) {
     const isOwner = await hasOwnerAccess(ctx);
     const ownerLines = isOwner
-      ? "\n\n👑 *Owner Sync*\n• !spin sync status\n• !spin sync top\n• !spin sync full\n• !spin sync step <jumlah_page>"
+      ? "\n\n👑 *Owner Sync*\n• !spin sync status\n• !spin sync top\n• !spin sync full\n• !spin sync step <jumlah_page>\n\n👑 *Owner Reset Jatah*\n• !spin reset all\n• !spin reset <nomor>\n• !spin reset (reply pesan user)"
       : "";
 
     logOk(ctx, "spin help");
@@ -749,6 +749,149 @@ export function createGameCommands(deps) {
 
     const senderIds = await resolveSenderIds(ctx);
     return senderIds.some(id => ownerIds.has(id));
+  }
+
+  function getMessageContextInfo(msg = {}) {
+    const message = msg?.message || {};
+    return (
+      message?.extendedTextMessage?.contextInfo ||
+      message?.imageMessage?.contextInfo ||
+      message?.videoMessage?.contextInfo ||
+      message?.documentMessage?.contextInfo ||
+      message?.buttonsResponseMessage?.contextInfo ||
+      message?.templateButtonReplyMessage?.contextInfo ||
+      message?.listResponseMessage?.contextInfo ||
+      null
+    );
+  }
+
+  function getMentionedOrQuotedIds(msg = {}) {
+    const ctxInfo = getMessageContextInfo(msg) || {};
+    const rawIds = [
+      ...(Array.isArray(ctxInfo?.mentionedJid) ? ctxInfo.mentionedJid : []),
+      ctxInfo?.participant,
+      ctxInfo?.participantPn,
+      ctxInfo?.participantLid
+    ];
+
+    const out = new Set();
+    for (const raw of rawIds) {
+      const id = toCanonicalPhoneId(raw);
+      if (id) out.add(id);
+    }
+    return Array.from(out);
+  }
+
+  function parseResetTargetIds(rawInput = "", msg = {}) {
+    const fromText = String(rawInput || "")
+      .split(/[,\s]+/)
+      .map(toCanonicalPhoneId)
+      .filter(Boolean);
+    const fromCtx = getMentionedOrQuotedIds(msg);
+    return Array.from(new Set([...fromText, ...fromCtx]));
+  }
+
+  async function handleSpinReset(ctx, subInput) {
+    if (!(await hasOwnerAccess(ctx))) {
+      logFail(ctx, "spin reset ditolak: bukan owner");
+      return ctx.reply(ctx.sock, ctx.msg, "🔒 Hanya owner yang boleh pakai `!spin reset`.");
+    }
+
+    const raw = String(subInput || "").trim();
+    const parts = raw.split(/\s+/).filter(Boolean);
+    const action = String(parts[0] || "").toLowerCase();
+    const today = getJakartaDateKey();
+    const state = loadSpinState();
+    const users = state?.users || {};
+    const targetIds = parseResetTargetIds(raw, ctx?.msg);
+
+    if ((!action && !targetIds.length) || action === "help" || action === "?") {
+      logFail(ctx, "spin reset format invalid");
+      return ctx.reply(
+        ctx.sock,
+        ctx.msg,
+        "❗ Format reset:\n• !spin reset all\n• !spin reset <nomor>\n• !spin reset (reply pesan user)"
+      );
+    }
+
+    if (["all", "semua", "global"].includes(action)) {
+      const entries = Object.entries(users);
+      let effectiveReset = 0;
+      let touchedToday = 0;
+
+      for (const [, user] of entries) {
+        if (!user || typeof user !== "object") continue;
+        if (String(user.lastSpinDate || "") !== today) continue;
+        touchedToday += 1;
+        if (Number(user.spinsToday || 0) > 0) effectiveReset += 1;
+        user.spinsToday = 0;
+      }
+
+      saveSpinState();
+      logOk(ctx, `spin reset all touched=${touchedToday} effective=${effectiveReset}`);
+      return ctx.reply(
+        ctx.sock,
+        ctx.msg,
+        `✅ Reset jatah spin harian berhasil.\n` +
+        `📅 Tanggal: ${today} (WIB)\n` +
+        `👥 User hari ini: ${touchedToday}\n` +
+        `🔄 User yang direset: ${effectiveReset}`
+      );
+    }
+
+    if (!targetIds.length) {
+      logFail(ctx, "spin reset gagal: target kosong");
+      return ctx.reply(
+        ctx.sock,
+        ctx.msg,
+        "❗ Target tidak valid.\nContoh: `!spin reset 6281234567890`\nAtau reply pesan user lalu kirim `!spin reset`."
+      );
+    }
+
+    const resetLines = [];
+    const missingIds = [];
+    let effectiveReset = 0;
+
+    for (const id of targetIds) {
+      const user = users[id];
+      if (!user || typeof user !== "object") {
+        missingIds.push(id);
+        continue;
+      }
+
+      const before = getDailySpinCount(user, today);
+      if (String(user.lastSpinDate || "") === today) {
+        user.spinsToday = 0;
+      }
+      const after = getDailySpinCount(user, today);
+      if (before > after) effectiveReset += 1;
+      resetLines.push(`• ${user.name || id} (${formatUserId(id)}): ${before} -> ${after}`);
+    }
+
+    if (!resetLines.length) {
+      logFail(ctx, "spin reset gagal: target tidak ditemukan");
+      return ctx.reply(
+        ctx.sock,
+        ctx.msg,
+        `❌ Tidak ada data user yang cocok untuk direset.\n` +
+        `Target: ${targetIds.map(formatUserId).join(", ")}`
+      );
+    }
+
+    saveSpinState();
+    const missingLine = missingIds.length
+      ? `\n❌ Tidak ditemukan: ${missingIds.map(formatUserId).join(", ")}`
+      : "";
+
+    logOk(ctx, `spin reset target=${targetIds.length} effective=${effectiveReset}`);
+    return ctx.reply(
+      ctx.sock,
+      ctx.msg,
+      `✅ Reset jatah spin target selesai.\n` +
+      `📅 Tanggal: ${today} (WIB)\n` +
+      `🔄 User yang berubah: ${effectiveReset}/${resetLines.length}\n` +
+      `${resetLines.join("\n")}${missingLine}`
+    );
   }
 
   async function runSpin(ctx) {
@@ -1024,6 +1167,10 @@ export function createGameCommands(deps) {
         }
         if (subLower === "stats" || subLower === "status") return showSpinStats(ctx);
         if (subLower === "top" || subLower === "leaderboard") return showLeaderboard(ctx);
+        if (subLower.startsWith("reset")) {
+          const rest = sub.replace(/^reset\s*/i, "");
+          return handleSpinReset(ctx, rest);
+        }
         if (subLower.startsWith("sync")) {
           const rest = sub.replace(/^sync\s*/i, "");
           return handleSync(ctx, rest);

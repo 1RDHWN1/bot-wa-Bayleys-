@@ -135,6 +135,10 @@ apabila ada fitur yang kurang stabil atau tidak berjalan sempurna.
   └ Jalankan batch sinkronisasi bertahap (owner)
 • !spin sync step <jumlah_page>
   └ Sinkronisasi manual sejumlah page (owner)
+• !spin reset all
+  └ Reset jatah spin semua user untuk hari ini (owner)
+• !spin reset <nomor> / reply user + !spin reset
+  └ Reset jatah spin user tertentu (owner)
 
 
 🎧 YouTube
