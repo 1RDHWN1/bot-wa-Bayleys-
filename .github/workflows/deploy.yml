@@ -4,17 +4,29 @@ on:
   push:
     branches: [main]
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   deploy:
     name: Deploy to VPS
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: Verify SSH key format
+        run: |
+          echo "${{ secrets.VPS_SSH_KEY }}" | head -c 50
+          echo "..."
+          echo "${{ secrets.VPS_SSH_KEY }}" | tail -c 50
+          echo ""
+          # Verify key has proper format
+          echo "${{ secrets.VPS_SSH_KEY }}" | grep -q "BEGIN OPENSSH PRIVATE KEY" && echo "✅ Key format OK" || echo "⚠️ Key format may be wrong"
 
       - name: Deploy via SSH
         uses: appleboy/ssh-action@v1
@@ -23,7 +35,9 @@ jobs:
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
           port: 22
-          script_stop: true
+          timeout: 60s
+          command_timeout: 10m
+          debug: true
           script: |
             set -e
             cd ${{ secrets.BOT_DIR }}
