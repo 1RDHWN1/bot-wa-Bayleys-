@@ -16,6 +16,9 @@ export function createAudioCommands(deps) {
   return [
     {
       names: ["suara"],
+      category: "Media",
+      description: "Teks ke voice note (TTS)",
+      usage: "!suara <teks> (max 250 karakter)",
       execute: async ctx => {
         const input = String(ctx.input || "");
         const sender = String(ctx.sender || "");
