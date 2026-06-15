@@ -21,6 +21,9 @@ export function createAdminCommands(deps) {
   return [
     {
       names: ["maintenance"],
+      category: "Admin",
+      description: "Mode maintenance bot (hanya owner)",
+      usage: "!maintenance status | !maintenance on [alasan] | !maintenance off",
       execute: async ctx => {
         const access = await getAccessContext(ctx);
         const subRaw = String(ctx.input || "").trim();
@@ -77,6 +80,9 @@ export function createAdminCommands(deps) {
     },
     {
       names: ["hapus"],
+      category: "Admin",
+      description: "Hapus pesan bot (reply pesan bot, owner/admin di grup)",
+      usage: "!hapus (reply pesan bot)",
       execute: async ctx => {
         const ctxInfo = getContextInfo(ctx.msg);
         const stanzaId = ctxInfo?.stanzaId;
