@@ -1,0 +1,42 @@
+name: Deploy Bot to VPS
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    name: Deploy to VPS
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: 22
+          script_stop: true
+          script: |
+            set -e
+            cd ${{ secrets.BOT_DIR }}
+            
+            echo "🔄 Pulling latest changes..."
+            git fetch origin main
+            git reset --hard origin/main
+            
+            echo "📦 Installing dependencies..."
+            npm ci --production
+            
+            echo "🔁 Restarting bot..."
+            pm2 restart bot-wa-bayleys --update-env
+            
+            echo "✅ Deploy selesai!"
+            pm2 status bot-wa-bayleys
