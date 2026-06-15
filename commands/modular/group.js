@@ -7,16 +7,22 @@ export function createGroupCommands(deps) {
   return [
     {
       names: ["tagall"],
+      category: "Group",
+      description: "Tag semua anggota grup",
+      usage: "!tagall <pesan>",
       execute: async ctx => {
         logOk(ctx, "tagall dipanggil");
-        return tagAll(ctx.sock, ctx.msg, ctx.input);
+        return deps.tagAll(ctx.sock, ctx.msg, ctx.input);
       }
     },
     {
       names: ["tagadmin"],
+      category: "Group",
+      description: "Tag admin grup",
+      usage: "!tagadmin <pesan>",
       execute: async ctx => {
         logOk(ctx, "tagadmin dipanggil");
-        return tagAdmin(ctx.sock, ctx.msg, ctx.input);
+        return deps.tagAdmin(ctx.sock, ctx.msg, ctx.input);
       }
     }
   ];
