@@ -24,6 +24,11 @@ export function createAdminCommands(deps) {
       category: "Admin",
       description: "Mode maintenance bot (hanya owner)",
       usage: "!maintenance status | !maintenance on [alasan] | !maintenance off",
+      subCommands: [
+        { names: "maintenance status", description: "Cek status maintenance" },
+        { names: "maintenance on [alasan]", description: "Aktifkan maintenance mode (owner)" },
+        { names: "maintenance off", description: "Matikan maintenance mode (owner)" }
+      ],
       execute: async ctx => {
         const access = await getAccessContext(ctx);
         const subRaw = String(ctx.input || "").trim();
@@ -83,6 +88,9 @@ export function createAdminCommands(deps) {
       category: "Admin",
       description: "Hapus pesan bot (reply pesan bot, owner/admin di grup)",
       usage: "!hapus (reply pesan bot)",
+      subCommands: [
+        { names: "hapus", description: "Reply pesan bot lalu ketik !hapus untuk menghapusnya (owner/admin di grup)" }
+      ],
       execute: async ctx => {
         const ctxInfo = getContextInfo(ctx.msg);
         const stanzaId = ctxInfo?.stanzaId;
