@@ -16,6 +16,9 @@ export function createScheduleCommands(deps) {
   return [
     {
       names: ["jadwal"],
+      category: "Schedule",
+      description: "Kelola jadwal/reminder per chat (harian WIB)",
+      usage: "!jadwal list | !jadwal tambah HH:MM pesan | !jadwal hapus <id> | !jadwal clear | !jadwal on/off <id>",
       execute: async ctx => {
         const input = String(ctx.input || "").trim();
         const [firstToken, ...restTokens] = input.split(/\s+/).filter(Boolean);
