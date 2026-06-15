@@ -9,6 +9,9 @@ export function createAICommands(deps) {
   return [
     {
       names: ["ai"],
+      category: "AI",
+      description: "Chat dengan AI (memory + knowledge + context chat)",
+      usage: "!ai <pertanyaan> | !ai reset",
       execute: async ctx =>
         handleAICommand({
           ...ctx,
