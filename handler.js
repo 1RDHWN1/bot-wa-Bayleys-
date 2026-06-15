@@ -1185,6 +1185,18 @@ function getModularRouter() {
     YT_SEARCH_TTL_MS
   };
 
+  // Create temp router to extract category info from commands
+  const tempRouter = createCommandRouter({
+    prefix: MODULAR_PREFIX,
+    commands: createModularCommands(modularDeps),
+    passiveHandlers: createModularPassiveHandlers(modularDeps),
+    guard: modularGuard,
+    logger: modularLogger,
+    ownerNumber: MODULAR_OWNER_NUMBER
+  });
+  const categoryMap = tempRouter.getCategoryMap();
+  const allCategories = tempRouter.getAllCategories();
+
   const commands = createModularCommands(modularDeps);
   const passiveHandlers = createModularPassiveHandlers(modularDeps);
 
@@ -1196,6 +1208,14 @@ function getModularRouter() {
     logger: modularLogger,
     ownerNumber: MODULAR_OWNER_NUMBER
   });
+
+  // Attach category helpers for dynamic help
+  modularRouter.getCategoryMap = () => categoryMap;
+  modularRouter.getAllCategories = () => allCategories;
+
+  // Expose to modularDeps for system.js
+  modularDeps.getCategoryMap = () => categoryMap;
+  modularDeps.getAllCategories = () => allCategories;
 
   return modularRouter;
 }
