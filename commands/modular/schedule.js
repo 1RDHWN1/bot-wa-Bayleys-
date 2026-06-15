@@ -19,6 +19,15 @@ export function createScheduleCommands(deps) {
       category: "Schedule",
       description: "Kelola jadwal/reminder per chat (harian WIB)",
       usage: "!jadwal list | !jadwal tambah HH:MM pesan | !jadwal hapus <id> | !jadwal clear | !jadwal on/off <id>",
+      subCommands: [
+        { names: "jadwal list", description: "Lihat daftar jadwal di chat ini" },
+        { names: "jadwal tambah HH:MM <pesan>", description: "Tambah jadwal baru (format: HH:MM pesan)" },
+        { names: "jadwal HH:MM <pesan>", description: "Shortcut tambah jadwal" },
+        { names: "jadwal hapus <id>", description: "Hapus jadwal by ID" },
+        { names: "jadwal clear", description: "Hapus semua jadwal di chat ini" },
+        { names: "jadwal on <id>", description: "Aktifkan jadwal" },
+        { names: "jadwal off <id>", description: "Nonaktifkan jadwal" }
+      ],
       execute: async ctx => {
         const input = String(ctx.input || "").trim();
         const [firstToken, ...restTokens] = input.split(/\s+/).filter(Boolean);
