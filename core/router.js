@@ -21,11 +21,20 @@ export function createCommandRouter({
   ownerNumber
 }) {
   const map = new Map();
+  const categoryMap = new Map(); // category -> command[]
   for (const cmd of commands) {
     for (const name of cmd.names) {
       map.set(name.toLowerCase(), cmd);
     }
+    const cat = cmd.category || "Lainnya";
+    if (!categoryMap.has(cat)) categoryMap.set(cat, []);
+    categoryMap.get(cat).push(cmd);
   }
+
+  // Expose for dynamic help
+  const getCommandMap = () => map;
+  const getCategoryMap = () => categoryMap;
+  const getAllCategories = () => Array.from(categoryMap.keys()).sort();
 
   async function handlePassive(ctx) {
     for (const handler of passiveHandlers) {
@@ -104,6 +113,5 @@ export function createCommandRouter({
     return true;
   }
 
-  return { handle };
+  return { handle, getCommandMap, getCategoryMap, getAllCategories };
 }
-
