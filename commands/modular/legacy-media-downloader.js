@@ -14,7 +14,8 @@ export async function handleDownloaderCommands(ctx, deps) {
     downloadYouTubeVideo,
     downloadTikTok,
     downloadInstagram,
-    getErrorMessage
+    getErrorMessage,
+    normalizeJid
   } = deps;
 
     if (command === "ytsearch") {
@@ -272,6 +273,7 @@ export async function handleDownloaderCommands(ctx, deps) {
     /* ===============================
        CUACA BMKG
     ================================ */
+
 
 
   return false;
