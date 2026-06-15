@@ -1,193 +1,98 @@
 import os from "os";
 import { makeOkLogger } from "./logger.js";
 
-function buildMenuText(msg) {
-  const botName = process.env.BOT_NAME || "BOT WA";
-  const ownerName = process.env.OWNER_NAME || "Owner";
-  const ownerNumber = process.env.OWNER_NUMBER || "-";
+/* ===============================
+   DYNAMIC HELP BUILDER
+================================ */
+
+function formatCommandHelp(cmd) {
+  const names = cmd.names.join(" | ");
+  const desc = cmd.description || "Tidak ada deskripsi";
+  const usage = cmd.usage ? `\n   └ Contoh: ${cmd.usage}` : "";
+  return `• ${names}${usage}\n   └ ${desc}`;
+}
+
+function buildCategorySection(category, commands) {
+  const emojiMap = {
+    "System": "⚙️",
+    "AI": "🧠",
+    "Knowledge": "📚",
+    "Media": "🖼️",
+    "Downloader": "🎧",
+    "Group": "👥",
+    "Game": "🎰",
+    "Schedule": "🗓️",
+    "Admin": "🛡️",
+    "Utility": "🔧",
+    "Owner": "👑",
+    "Lainnya": "📦"
+  };
+  const emoji = emojiMap[category] || "📦";
+  let txt = `\n${emoji} *${category}*\n`;
+  for (const cmd of commands) {
+    txt += formatCommandHelp(cmd) + "\n";
+  }
+  return txt;
+}
+
+function buildMenuText(msg, categoryMap, allCategories, prefix, botName, ownerName, ownerNumber) {
   const senderName =
     msg.pushName ||
     msg.key.participant?.split("@")[0] ||
     "Unknown";
 
-  return `
-🤖 *${botName} — HELP MENU*
-*Halo ${senderName}*
-Ini adalah bot experimental yang dibuat dengan library Baileys. Bot ini merupakan project gabut individu dari *${ownerName}*. Sehingga mohon dimaklumi
-apabila ada fitur yang kurang stabil atau tidak berjalan sempurna.
+  // Header
+  let text = `🤖 *${botName} — HELP MENU*\n*Halo ${senderName}*
 
-━━━━━━━━━━━━━━━━━━
-📌 *Daftar Fitur Bot*
+Gunakan \`${prefix}help <kategori>\` untuk lihat detail kategori.
+Contoh: \`${prefix}help ai\`, \`${prefix}help downloader\`
 
-🖼️ *Stiker*
-• !stiker
-  └ Reply gambar / video untuk jadi stiker
+`;
 
-🧠 *AI Chat*
-• !ai <pertanyaan>
-  └ Tanya AI (memory + data chat + data global)
-• !ai reset
-  └ Hapus memory percakapan AI
+  // If specific category requested (handled in execute)
+  // Here we show overview: all categories + command count
+  for (const cat of allCategories) {
+    const cmds = categoryMap.get(cat) || [];
+    if (cmds.length === 0) continue;
+    const emoji = {
+      "System": "⚙️", "AI": "🧠", "Knowledge": "📚",
+      "Media": "🖼️", "Downloader": "🎧", "Group": "👥",
+      "Game": "🎰", "Schedule": "🗓️", "Admin": "🛡️",
+      "Utility": "🔧", "Owner": "👑", "Lainnya": "📦"
+    }[cat] || "📦";
+    text += `${emoji} *${cat}* (${cmds.length} command)\n`;
+  }
 
-📚 *AI Data / Knowledge*
-• !ai simpan <kunci>=<nilai>
-• !ai simpen data <kunci> adalah <nilai>
-• !ai catat bahwa <kunci> adalah <nilai>
-  └ Simpan data natural (owner/editor)
-• !ai ganti data <kunci> jadi <nilai>
-• !ai ubahin data <kunci> jadi <nilai>
-  └ Ganti/update data natural (owner/editor)
-• !ai hapus <kunci>
-• !ai apusin data <kunci>
-  └ Hapus data tersimpan (owner/editor)
-• !ai data list
-  └ Lihat semua data tersimpan
-• !ai data <kunci>
-  └ Ambil data tertentu
-• !ai data log
-• !ai data log <kunci>
-  └ Lihat riwayat perubahan data
-• !ai data export
-• !ai data export txt
-  └ Export data scope saat ini jadi file
-• !ai import data
-  └ Import data dari file .txt/.json (preview dulu)
-• !ai ya
-• !ai batal
-  └ Konfirmasi / batalkan import
-
-🌐 *AI Scope / Grup* (Owner)
-• !ai scope
-  └ Lihat scope data chat ini
-• !ai grup list
-  └ Kirim file daftar scope semua grup
-• !ai grup cari <nama>
-  └ Cari scope grup berdasarkan nama
-• !ai alias <nama> = group:<jid>
-• !ai alias list
-• !ai alias hapus <nama>
-  └ Alias scope, contoh pakai: !ai untuk @musik data list
-• !ai untuk group:<jid> data list
-• !ai untuk group:<jid> simpen data <kunci> = <nilai>
-• !ai untuk @alias gantiin data <kunci> jadi <nilai>
-  └ Kelola data grup lain tanpa chat di grup itu
-• !ai global simpen data <kunci> = <nilai>
-• !ai global data list
-  └ Data global yang bisa dipakai semua chat
-• !ai data backup all
-  └ Backup semua knowledge ke file JSON
-
-👥 *AI Editor*
-• !ai editor list
-  └ Lihat daftar editor data
-• !ai editor id
-  └ Lihat ID kamu (untuk didaftarkan owner)
-• !ai editor add <nomor>
-  └ Tambah editor (owner only, bisa reply/mention user)
-• !ai editor del <nomor>
-  └ Hapus editor (owner only)
-• !ai editor clear
-  └ Hapus semua editor tambahan (owner only)
-
-🎙️ *Text to Speech*
-• !suara <teks>
-  └ Ubah teks jadi voice note
-
-  🖼️ *Gambar*
-• !gambar <kata kunci>
-  └ Cari gambar via Google
-• !quote <teks>
-• !q <teks>
-  └ Buat gambar quote dari teks / reply chat
-
-  🔄 *Konversi Media*
-• !toimg
-  └ Ubah stiker menjadi gambar
-• !rvo
-  └ Reply pesan view once untuk baca ulang media
-
-  🌦️ *Cuaca* (Beta)
-• !cuaca <lokasi>(spasi)<provinsi>(spasi)<negara>
-• !cuaca besok <lokasi>
-  └ Cek cuaca di lokasi tertentu
-
-🗓️ *Jadwal*
-• !jadwal list
-• !jadwal HH:MM <pesan>
-• !jadwal tambah HH:MM <pesan>
-• !jadwal hapus <id>
-• !jadwal clear
-• !jadwal on <id>
-• !jadwal off <id>
-
-🎰 *Anime Lucky Spin* (Hybrid)
-• !spin
-  └ Spin karakter anime 1x per hari (WIB) + gambar karakter
-• !spin stats
-  └ Lihat poin, streak, dan status spin
-• !spin top
-  └ Leaderboard global poin spin
-• !koleksi
-  └ Lihat koleksi karakter kamu
-• !spin sync status
-  └ Cek status sinkronisasi hybrid (owner)
-• !spin sync top|full
-  └ Jalankan batch sinkronisasi bertahap (owner)
-• !spin sync step <jumlah_page>
-  └ Sinkronisasi manual sejumlah page (owner)
-• !spin reset all
-  └ Reset jatah spin semua user untuk hari ini (owner)
-• !spin reset <nomor> / reply user + !spin reset
-  └ Reset jatah spin user tertentu (owner)
-
-
-🎧 YouTube
-• !yt <watch url>
-• !musik <query>
-• !yta <watch url>
-• !ytsearch <query>
-
-⚠️ *Fitur Downloader sedang dalam penhgembangan, mohon bersabar yaa.*
-
-🎵 TikTok
-• !tt <url>
-
-📸 Instagram
-• !ig <url>
-
-📣 *Tag Grup*
-• !tagall <pesan>
-  └ Tag semua anggota grup
-• !tagadmin <pesan>
-  └ Tag admin grup
-
-🧹 *Moderasi*
-• !hapus
-  └ Reply pesan bot untuk hapus pesan tersebut
-• !maintenance status
-• !maintenance on [alasan]
-• !maintenance off
-
-📊 *Status Bot*
-• !ping
-• !status
-• !stats
-• !antrian
-  └ Cek status bot & server
-
-━━━━━━━━━━━━━━━━━━
+  text += `\n━━━━━━━━━━━━━━━━━━
 👑 *Owner*
 • Nama: ${ownerName}
 • Kontak: wa.me/${ownerNumber}
 
 ━━━━━━━━━━━━━━━━━━
 ℹ️ *Catatan*
-• Gunakan bot dengan bijak
 • Beberapa fitur hanya bisa di grup
-• Bot tidak selalu online 24/7 (jika dinyalakan saja, karena masih pakai PC pribadi sebagai server.)
+• Bot tidak selalu online 24/7
 
-✅ *Status Bot:* Aktif
-`.trim();
+✅ *Status Bot:* Aktif`;
+
+  return text.trim();
+}
+
+function buildCategoryDetailText(category, commands, prefix) {
+  const emojiMap = {
+    "System": "⚙️", "AI": "🧠", "Knowledge": "📚",
+    "Media": "🖼️", "Downloader": "🎧", "Group": "👥",
+    "Game": "🎰", "Schedule": "🗓️", "Admin": "🛡️",
+    "Utility": "🔧", "Owner": "👑", "Lainnya": "📦"
+  };
+  const emoji = emojiMap[category] || "📦";
+  
+  let text = `${emoji} *${category} COMMANDS*\n━━━━━━━━━━━━━━━━━━\n`;
+  for (const cmd of commands) {
+    text += formatCommandHelp(cmd) + "\n";
+  }
+  text += `\n━━━━━━━━━━━━━━━━━━\nKetik \`${prefix}help\` untuk kembali ke menu utama.`;
+  return text.trim();
 }
 
 export function createSystemCommands(deps) {
@@ -198,21 +103,54 @@ export function createSystemCommands(deps) {
     getDownloaderQueueSnapshot,
     getDownloaderQueueSize,
     runtimeStats,
-    logCommandResult
+    logCommandResult,
+    getCategoryMap,
+    getAllCategories
   } = deps;
   const logOk = makeOkLogger(logCommandResult);
+
+  const prefix = process.env.BOT_PREFIX || "!";
+  const botName = process.env.BOT_NAME || "BOT WA";
+  const ownerName = process.env.OWNER_NAME || "Owner";
+  const ownerNumber = (process.env.OWNER_NUMBER || "").replace(/\D/g, "");
 
   return [
     {
       names: ["help", "menu"],
+      category: "System",
+      description: "Tampilkan menu bantuan (overview semua kategori)",
+      usage: "!help [kategori]",
       execute: async ctx => {
-        const menuText = buildMenuText(ctx.msg);
-        logOk(ctx, "menu terkirim");
-        return ctx.reply(ctx.sock, ctx.msg, menuText);
+        const { msg, reply, sock } = ctx;
+        const categoryMap = getCategoryMap();
+        const allCategories = getAllCategories();
+        
+        // Check if user requested specific category
+        const args = ctx.args || [];
+        if (args.length > 0) {
+          const requestedCat = args[0].toLowerCase();
+          const matchedCat = allCategories.find(c => c.toLowerCase() === requestedCat);
+          if (matchedCat) {
+            const cmds = categoryMap.get(matchedCat) || [];
+            const text = buildCategoryDetailText(matchedCat, cmds, prefix);
+            logOk(ctx, `help category=${matchedCat}`);
+            return reply(sock, msg, text);
+          }
+          // Category not found, show available categories
+          return reply(sock, msg, `❌ Kategori "${args[0]}" tidak ditemukan.\nKategori tersedia: ${allCategories.join(", ")}`);
+        }
+
+        // Show overview
+        const text = buildMenuText(msg, categoryMap, allCategories, prefix, botName, ownerName, ownerNumber);
+        logOk(ctx, "menu overview terkirim");
+        return reply(sock, msg, text);
       }
     },
     {
       names: ["ping", "status"],
+      category: "System",
+      description: "Cek status bot, ping, uptime, RAM, internet",
+      usage: "!ping",
       execute: async ctx => {
         const start = Date.now();
         await ctx.reply(ctx.sock, ctx.msg, "⏱️ Mengecek status...");
@@ -230,8 +168,7 @@ export function createSystemCommands(deps) {
 🌐 Internet: ${netLatency ? netLatency + " ms" : "❌"}
 ⏱️ Uptime: ${uptime}
 💾 RAM: ${usedRam} / ${totalRam}
-━━━━━━━━━━━━━━
-`.trim();
+━━━━━━━━━━━━━━`.trim();
 
         logOk(ctx, `status ping=${ping}ms net=${netLatency ? `${netLatency}ms` : "off"}`);
         return ctx.reply(ctx.sock, ctx.msg, textStatus);
@@ -239,6 +176,9 @@ export function createSystemCommands(deps) {
     },
     {
       names: ["antrian", "queue"],
+      category: "System",
+      description: "Lihat status antrean downloader",
+      usage: "!antrian",
       execute: async ctx => {
         const q = getDownloaderQueueSnapshot();
         const activeLine = q.active
@@ -258,6 +198,9 @@ ${activeLine}
     },
     {
       names: ["stats"],
+      category: "System",
+      description: "Statistik runtime bot (total eksekusi, top command, dll)",
+      usage: "!stats",
       execute: async ctx => {
         const totals = runtimeStats.totals.ok + runtimeStats.totals.fail;
         const dTotals = runtimeStats.downloader.ok + runtimeStats.downloader.fail;
