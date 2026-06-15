@@ -784,7 +784,7 @@ export function createGameCommands(deps) {
 
   function parseResetTargetIds(rawInput = "", msg = {}) {
     const fromText = String(rawInput || "")
-      .split(/[,\s]+/)
+      .split(/[\s,]+/)
       .map(toCanonicalPhoneId)
       .filter(Boolean);
     const fromCtx = getMentionedOrQuotedIds(msg);
@@ -1146,6 +1146,9 @@ export function createGameCommands(deps) {
   return [
     {
       names: ["spin"],
+      category: "Game",
+      description: "Anime gacha hybrid (local + Jikan API) - spin, stats, leaderboard, sync, reset",
+      usage: "!spin | !spin stats | !spin top | !spin help | !spin sync status | !spin reset all",
       execute: async ctx => {
         const sub = String(ctx.input || "").trim();
         const subLower = sub.toLowerCase();
@@ -1182,6 +1185,9 @@ export function createGameCommands(deps) {
     },
     {
       names: ["koleksi", "collection", "karakterku"],
+      category: "Game",
+      description: "Lihat koleksi karakter anime yang sudah didapat",
+      usage: "!koleksi",
       execute: async ctx => showCollection(ctx)
     }
   ];
