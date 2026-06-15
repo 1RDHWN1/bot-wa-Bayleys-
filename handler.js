@@ -1197,6 +1197,10 @@ function getModularRouter() {
   const categoryMap = tempRouter.getCategoryMap();
   const allCategories = tempRouter.getAllCategories();
 
+  // Expose to modularDeps for system.js BEFORE creating real commands
+  modularDeps.getCategoryMap = () => categoryMap;
+  modularDeps.getAllCategories = () => allCategories;
+
   const commands = createModularCommands(modularDeps);
   const passiveHandlers = createModularPassiveHandlers(modularDeps);
 
@@ -1209,13 +1213,9 @@ function getModularRouter() {
     ownerNumber: MODULAR_OWNER_NUMBER
   });
 
-  // Attach category helpers for dynamic help
+  // Attach category helpers for dynamic help (also on router for external access)
   modularRouter.getCategoryMap = () => categoryMap;
   modularRouter.getAllCategories = () => allCategories;
-
-  // Expose to modularDeps for system.js
-  modularDeps.getCategoryMap = () => categoryMap;
-  modularDeps.getAllCategories = () => allCategories;
 
   return modularRouter;
 }
