@@ -9,30 +9,18 @@ function formatCommandHelp(cmd) {
   const names = cmd.names.join(" | ");
   const desc = cmd.description || "Tidak ada deskripsi";
   const usage = cmd.usage ? `\n   └ Contoh: ${cmd.usage}` : "";
-  return `• ${names}${usage}\n   └ ${desc}`;
-}
-
-function buildCategorySection(category, commands) {
-  const emojiMap = {
-    "System": "⚙️",
-    "AI": "🧠",
-    "Knowledge": "📚",
-    "Media": "🖼️",
-    "Downloader": "🎧",
-    "Group": "👥",
-    "Game": "🎰",
-    "Schedule": "🗓️",
-    "Admin": "🛡️",
-    "Utility": "🔧",
-    "Owner": "👑",
-    "Lainnya": "📦"
-  };
-  const emoji = emojiMap[category] || "📦";
-  let txt = `\n${emoji} *${category}*\n`;
-  for (const cmd of commands) {
-    txt += formatCommandHelp(cmd) + "\n";
+  let text = `• ${names}${usage}\n   └ ${desc}`;
+  
+  // Add sub-commands if available
+  if (cmd.subCommands && Array.isArray(cmd.subCommands) && cmd.subCommands.length > 0) {
+    for (const sub of cmd.subCommands) {
+      const subNames = Array.isArray(sub.names) ? sub.names.join(" | ") : sub.names;
+      const subDesc = sub.description || "";
+      const subUsage = sub.usage ? ` ${sub.usage}` : "";
+      text += `\n  • ${subNames}${subUsage}\n     └ ${subDesc}`;
+    }
   }
-  return txt;
+  return text;
 }
 
 function buildMenuText(msg, categoryMap, allCategories, prefix, botName, ownerName, ownerNumber) {
@@ -41,7 +29,6 @@ function buildMenuText(msg, categoryMap, allCategories, prefix, botName, ownerNa
     msg.key.participant?.split("@")[0] ||
     "Unknown";
 
-  // Header
   let text = `🤖 *${botName} — HELP MENU*\n*Halo ${senderName}*
 
 Gunakan \`${prefix}help <kategori>\` untuk lihat detail kategori.
@@ -49,8 +36,6 @@ Contoh: \`${prefix}help ai\`, \`${prefix}help downloader\`
 
 `;
 
-  // If specific category requested (handled in execute)
-  // Here we show overview: all categories + command count
   for (const cat of allCategories) {
     const cmds = categoryMap.get(cat) || [];
     if (cmds.length === 0) continue;
@@ -125,7 +110,6 @@ export function createSystemCommands(deps) {
         const categoryMap = getCategoryMap();
         const allCategories = getAllCategories();
         
-        // Check if user requested specific category
         const args = ctx.args || [];
         if (args.length > 0) {
           const requestedCat = args[0].toLowerCase();
@@ -136,11 +120,9 @@ export function createSystemCommands(deps) {
             logOk(ctx, `help category=${matchedCat}`);
             return reply(sock, msg, text);
           }
-          // Category not found, show available categories
           return reply(sock, msg, `❌ Kategori "${args[0]}" tidak ditemukan.\nKategori tersedia: ${allCategories.join(", ")}`);
         }
 
-        // Show overview
         const text = buildMenuText(msg, categoryMap, allCategories, prefix, botName, ownerName, ownerNumber);
         logOk(ctx, "menu overview terkirim");
         return reply(sock, msg, text);
