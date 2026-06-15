@@ -141,7 +141,8 @@ export function createDownloaderReplyPassiveHandler(deps) {
       }
     }
 
-    const cacheState = ytSearchCache.get(sender);
+    const senderKey = normalizeJid(sender);
+    const cacheState = ytSearchCache.get(senderKey);
     if (!cacheState) return false;
     const cacheItems = Array.isArray(cacheState) ? cacheState : cacheState.items;
     const cacheCreatedAt = Array.isArray(cacheState)
@@ -151,7 +152,7 @@ export function createDownloaderReplyPassiveHandler(deps) {
     if (!Array.isArray(cacheItems) || !cacheItems.length) return false;
 
     if (cacheCreatedAt && Date.now() - cacheCreatedAt > YT_SEARCH_TTL_MS) {
-      ytSearchCache.delete(sender);
+      ytSearchCache.delete(senderKey);
       await reply(sock, msg, "⌛ Hasil pencarian sudah kadaluarsa. Kirim ulang `!ytsearch` atau `!musik`.");
       return true;
     }
@@ -175,8 +176,8 @@ export function createDownloaderReplyPassiveHandler(deps) {
     const selected = cacheItems[Number(text) - 1];
     if (!selected) return false;
 
-    ytSearchCache.delete(sender);
-    await reply(sock, msg, `🎧 Mengambil audio:\n${selected.title}`);
+    ytSearchCache.delete(senderKey);
+    await reply(sock, msg, `🎧 Mengambil audio:\\n${selected.title}`);
 
     try {
       const ytUrl = normalizeYouTubeUrl(selected.url) || selected.url;
