@@ -25,7 +25,8 @@ export async function handleDownloaderCommands(ctx, deps) {
 
       try {
         const results = await ytSearch(input);
-        ytSearchCache.set(sender, {
+        const senderKey = normalizeJid(sender);
+        ytSearchCache.set(senderKey, {
           items: results,
           createdAt: Date.now()
         });
@@ -55,7 +56,8 @@ export async function handleDownloaderCommands(ctx, deps) {
 
       try {
         const results = await searchYouTubeMusic(input);
-        ytSearchCache.set(sender, {
+        const senderKey = normalizeJid(sender);
+        ytSearchCache.set(senderKey, {
           items: results,
           createdAt: Date.now()
         });
