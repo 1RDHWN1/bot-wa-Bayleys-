@@ -1181,6 +1181,8 @@ function getModularRouter() {
     buildFactsContext,
     askAI,
     knowledgeAliases,
+    tavilySearch,
+    formatTavilyForPrompt,
     YT_CHOICE_TTL_MS,
     YT_SEARCH_TTL_MS
   };
