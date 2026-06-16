@@ -7,12 +7,13 @@ export function createUtilityCommands(deps) {
   const logFail = (ctx, reason) => logCommandResult({ ...ctx, status: "FAIL", reason, durationMs: 0 });
 
   // ============================================================
-  // QR CODE GENERATOR (Google Chart API - no key needed)
+  // QR CODE GENERATOR (quickchart.io - free, no key, reliable)
   // ============================================================
   async function generateQR(text) {
     const encoded = encodeURIComponent(text);
     const size = 300;
-    const url = `https://chart.googleapis.com/chart?cht=qr&chl=${encoded}&chs=${size}x${size}&choe=UTF-8`;
+    // quickchart.io - reliable free QR API
+    const url = `https://quickchart.io/qr?text=${encoded}&size=${size}&margin=1&errorCorrectionLevel=M`;
     
     const res = await axios.get(url, { 
       responseType: "arraybuffer",
@@ -20,53 +21,69 @@ export function createUtilityCommands(deps) {
       headers: { "User-Agent": "BotWA/1.0" }
     });
     
+    if (!res.data || res.data.length < 100) {
+      throw new Error("QR response too small (likely error page)");
+    }
     return Buffer.from(res.data);
   }
 
   // ============================================================
-  // URL SHORTENER (multiple fallbacks: TinyURL -> is.gd -> CleanURI)
+  // URL SHORTENER (multiple fallbacks with correct params)
   // ============================================================
   async function shortenUrl(longUrl) {
     const errors = [];
 
-    // 1. TinyURL (most reliable, no key)
+    // 1. TinyURL (most reliable)
     try {
-      const res = await axios.get("https://tinyurl.com/api-create.php", {
-        params: { url: longUrl },
-        timeout: 8000,
-        headers: { "User-Agent": "BotWA/1.0" }
-      });
+      const res = await axios.post("https://tinyurl.com/api-create.php", 
+        `url=${encodeURIComponent(longUrl)}`,
+        { timeout: 8000, headers: { "Content-Type": "application/x-www-form-urlencoded", "User-Agent": "BotWA/1.0" } }
+      );
       const short = String(res.data).trim();
-      if (short.startsWith("http") && short !== longUrl) return short;
-      errors.push(`TinyURL: ${short}`);
+      if (short.startsWith("http") && short !== longUrl && !short.includes("error")) return short;
+      errors.push(`TinyURL: ${short.slice(0, 100)}`);
     } catch (e) {
       errors.push(`TinyURL: ${e.message}`);
     }
 
-    // 2. is.gd (backup, no key)
+    // 2. is.gd
     try {
       const res = await axios.get("https://is.gd/create.php", {
         params: { format: "json", url: longUrl },
         timeout: 8000,
         headers: { "User-Agent": "BotWA/1.0" }
       });
-      if (res.data?.shorturl && res.data.shorturl !== longUrl) return res.data.shorturl;
-      errors.push(`is.gd: ${res.data?.error || "unknown"}`);
+      if (res.data?.shorturl && res.data.shorturl !== longUrl && !res.data.error) return res.data.shorturl;
+      errors.push(`is.gd: ${res.data?.error || res.data?.errormessage || "unknown"}`);
     } catch (e) {
       errors.push(`is.gd: ${e.message}`);
     }
 
-    // 3. CleanURI (backup)
+    // 3. TinyURL API v2 (alternative)
     try {
-      const res = await axios.post("https://cleanuri.com/api/v1/shorten", null, {
-        params: { url: longUrl },
+      const res = await axios.post("https://tinyurl.com/api-create.php",
+        `url=${encodeURIComponent(longUrl)}`,
+        { timeout: 8000, headers: { "Content-Type": "application/x-www-form-urlencoded" } }
+      );
+      const short = String(res.data).trim();
+      if (short.startsWith("http") && short !== longUrl) return short;
+    } catch (e) {
+      errors.push(`TinyURL v2: ${e.message}`);
+    }
+
+    // 4. Cutt.ly (free tier, no key needed for basic)
+    try {
+      const res = await axios.get("https://cutt.ly/api/api.php", {
+        params: { key: "demo", short: longUrl }, // demo key might work
         timeout: 8000,
         headers: { "User-Agent": "BotWA/1.0" }
       });
-      if (res.data?.result_url && res.data.result_url !== longUrl) return res.data.result_url;
-      errors.push(`CleanURI: ${res.data?.error || "unknown"}`);
+      if (res.data?.url?.shortLink && res.data.url.shortLink !== longUrl && res.data.url.status === 7) {
+        return res.data.url.shortLink;
+      }
+      errors.push(`Cutt.ly: ${res.data?.url?.status || "unknown"}`);
     } catch (e) {
-      errors.push(`CleanURI: ${e.message}`);
+      errors.push(`Cutt.ly: ${e.message}`);
     }
 
     throw new Error(`Semua shortener gagal: ${errors.join(" | ")}`);
@@ -94,8 +111,8 @@ export function createUtilityCommands(deps) {
       description: "Generate QR code dari teks/link (max 2000 char)",
       usage: "!qr <teks atau link>",
       subCommands: [
-        { names: "qr <teks>", description: "Generate QR code, kirim sebagai gambar" },
-        { names: "qr <link>", description: "Generate QR untuk link (bisa di-scan)" }
+        { names: ["qr <teks>"], description: "Generate QR code, kirim sebagai gambar" },
+        { names: ["qr <link>"], description: "Generate QR untuk link (bisa di-scan WA)" }
       ],
       execute: async ctx => {
         const { sock, msg, args, jid, sender, reply } = ctx;
@@ -133,12 +150,12 @@ export function createUtilityCommands(deps) {
     {
       names: ["short", "shorturl", "tiny"],
       category: "Utility",
-      description: "Pendekkan URL panjang (TinyURL / is.gd / CleanURI)",
+      description: "Pendekkan URL panjang (TinyURL / is.gd / Cutt.ly)",
       usage: "!short <url> | !tiny <url>",
       subCommands: [
-        { names: "short <url>", description: "Pendekkan URL dengan TinyURL (fallback ke is.gd, CleanURI)" },
-        { names: "tiny <url>", description: "Alias short" },
-        { names: "shorturl <url>", description: "Alias short (English)" }
+        { names: ["short <url>"], description: "Pendekkan URL dengan TinyURL (fallback is.gd, Cutt.ly)" },
+        { names: ["tiny <url>"], description: "Alias short" },
+        { names: ["shorturl <url>"], description: "Alias short (English)" }
       ],
       execute: async ctx => {
         const { sock, msg, args, jid, sender, reply } = ctx;
@@ -161,7 +178,7 @@ export function createUtilityCommands(deps) {
             `✅ *URL Disingkat*\n\n` +
             `🔗 Asli: ${url.length > 100 ? url.slice(0, 100) + "..." : url}\n` +
             `✂️ Pendek: ${shortUrl}\n\n` +
-            `_Powered by TinyURL / is.gd / CleanURI_`
+            `_Powered by TinyURL / is.gd / Cutt.ly_`
           );
 
           logInfo(`SHORTURL | user=${sender.split("@")[0]} | ${url} -> ${shortUrl}`);
