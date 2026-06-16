@@ -15,6 +15,8 @@ const KNOWLEDGE_EXTRACT_MODEL =
   process.env.AI_MODEL ||
   DEFAULT_AI_MODEL;
 
+const TAVILY_API_KEY = process.env.TAVILY_API_KEY || "";
+
 function getNowContext(timeZone = AI_TIMEZONE) {
   const now = new Date();
   const hari = new Intl.DateTimeFormat("id-ID", {
@@ -48,6 +50,7 @@ export {
   SUMMARY_MODEL,
   OPENROUTER_URL,
   KNOWLEDGE_EXTRACT_MODEL,
+  TAVILY_API_KEY,
   readIntEnv,
   getNowContext
 };
