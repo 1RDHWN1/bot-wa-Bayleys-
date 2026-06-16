@@ -11,7 +11,7 @@ export function createGroupCommands(deps) {
       description: "Tag semua anggota grup",
       usage: "!tagall <pesan>",
       subCommands: [
-        { names: "tagall <pesan>", description: "Tag semua anggota grup dengan pesan custom" }
+        { names: ["tagall <pesan>"], description: "Tag semua anggota grup dengan pesan custom" }
       ],
       execute: async ctx => {
         logOk(ctx, "tagall dipanggil");
@@ -24,7 +24,7 @@ export function createGroupCommands(deps) {
       description: "Tag admin grup",
       usage: "!tagadmin <pesan>",
       subCommands: [
-        { names: "tagadmin <pesan>", description: "Tag admin grup dengan pesan custom" }
+        { names: ["tagadmin <pesan>"], description: "Tag admin grup dengan pesan custom" }
       ],
       execute: async ctx => {
         logOk(ctx, "tagadmin dipanggil");
