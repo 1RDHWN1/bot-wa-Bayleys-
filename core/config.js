@@ -39,7 +39,8 @@ export function validateStartupConfig(logger) {
     "GOOGLE_API_KEY",
     "GOOGLE_CSE_ID",
     "WEATHERAPI_KEY",
-    "ELEVEN_API_KEY"
+    "ELEVEN_API_KEY",
+    "TAVILY_API_KEY"
   ];
 
   for (const key of optionalButRecommended) {
@@ -63,4 +64,3 @@ export function validateStartupConfig(logger) {
     throw new Error(`Validasi config gagal (${errors.length} error)`);
   }
 }
-
