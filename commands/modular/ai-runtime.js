@@ -985,14 +985,16 @@ export function createAICommandExecutor(deps) {
     globalContext ? `Data global:\n${globalContext}` : "",
     scopedContext ? `Data scope ${formatScopeLabel(knowledgeScopeId)}:\n${scopedContext}` : ""
   ].filter(Boolean).join("\n\n");
-  const { content, model, historySize } = await askAI(aiInput, conversationId, {
-    knowledgeContext
+  const { content, model, historySize, usedSearch } = await askAI(aiInput, conversationId, {
+    knowledgeContext,
+    enableSearch: true
   });
   const turns = Math.ceil(historySize / 2);
 
   const text = `
 🤖 Model: *${model}*
 🧠 Memory: *${turns} turn*
+${usedSearch ? "🔍 Web Search: *aktif*" : ""}
 ━━━━━━━━━━━━━━━━━━
 ${content}
 `.trim();
