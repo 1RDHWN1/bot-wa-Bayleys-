@@ -5,18 +5,31 @@ import { makeOkLogger } from "./logger.js";
    DYNAMIC HELP BUILDER
 ================================ */
 
+function safeString(val) {
+  if (val == null) return "";
+  if (typeof val === "string") return val;
+  if (Array.isArray(val)) return val.map(safeString).join(", ");
+  return String(val);
+}
+
+function safeJoin(arr, sep = " | ") {
+  if (!arr) return "";
+  if (Array.isArray(arr)) return arr.map(safeString).filter(Boolean).join(sep);
+  return safeString(arr);
+}
+
 function formatCommandHelp(cmd) {
-  const names = cmd.names.join(" | ");
-  const desc = cmd.description || "Tidak ada deskripsi";
-  const usage = cmd.usage ? `\n   └ Contoh: ${cmd.usage}` : "";
+  const names = safeJoin(cmd.names);
+  const desc = safeString(cmd.description) || "Tidak ada deskripsi";
+  const usage = cmd.usage ? `\n   └ Contoh: ${safeString(cmd.usage)}` : "";
   let text = `• ${names}${usage}\n   └ ${desc}`;
   
   // Add sub-commands if available
   if (cmd.subCommands && Array.isArray(cmd.subCommands) && cmd.subCommands.length > 0) {
     for (const sub of cmd.subCommands) {
-      const subNames = Array.isArray(sub.names) ? sub.names.join(" | ") : sub.names;
-      const subDesc = sub.description || "";
-      const subUsage = sub.usage ? ` ${sub.usage}` : "";
+      const subNames = safeJoin(sub.names);
+      const subDesc = safeString(sub.description) || "";
+      const subUsage = sub.usage ? ` ${safeString(sub.usage)}` : "";
       text += `\n  • ${subNames}${subUsage}\n     └ ${subDesc}`;
     }
   }
@@ -26,15 +39,10 @@ function formatCommandHelp(cmd) {
 function buildMenuText(msg, categoryMap, allCategories, prefix, botName, ownerName, ownerNumber) {
   const senderName =
     msg.pushName ||
-    msg.key.participant?.split("@")[0] ||
+    safeString(msg.key?.participant)?.split("@")[0] ||
     "Unknown";
 
-  let text = `🤖 *${botName} — HELP MENU*\n*Halo ${senderName}*
-
-Gunakan \`${prefix}help <kategori>\` untuk lihat detail kategori.
-Contoh: \`${prefix}help ai\`, \`${prefix}help downloader\`
-
-`;
+  let text = `🤖 *${safeString(botName)} — HELP MENU*\n*Halo ${senderName}*\n\nGunakan \`${prefix}help <kategori>\` untuk lihat detail kategori.\nContoh: \`${prefix}help ai\`, \`${prefix}help downloader\`\n\n`;
 
   for (const cat of allCategories) {
     const cmds = categoryMap.get(cat) || [];
@@ -45,20 +53,10 @@ Contoh: \`${prefix}help ai\`, \`${prefix}help downloader\`
       "Game": "🎰", "Schedule": "🗓️", "Admin": "🛡️",
       "Utility": "🔧", "Owner": "👑", "Lainnya": "📦"
     }[cat] || "📦";
-    text += `${emoji} *${cat}* (${cmds.length} command)\n`;
+    text += `${emoji} *${safeString(cat)}* (${cmds.length} command)\n`;
   }
 
-  text += `\n━━━━━━━━━━━━━━━━━━
-👑 *Owner*
-• Nama: ${ownerName}
-• Kontak: wa.me/${ownerNumber}
-
-━━━━━━━━━━━━━━━━━━
-ℹ️ *Catatan*
-• Beberapa fitur hanya bisa di grup
-• Bot tidak selalu online 24/7
-
-✅ *Status Bot:* Aktif`;
+  text += `\n━━━━━━━━━━━━━━━━━━\n👑 *Owner*\n• Nama: ${safeString(ownerName)}\n• Kontak: wa.me/${safeString(ownerNumber)}\n\n━━━━━━━━━━━━━━━━━━\nℹ️ *Catatan*\n• Beberapa fitur hanya bisa di grup\n• Bot tidak selalu online 24/7\n\n✅ *Status Bot:* Aktif`;
 
   return text.trim();
 }
@@ -72,7 +70,7 @@ function buildCategoryDetailText(category, commands, prefix) {
   };
   const emoji = emojiMap[category] || "📦";
   
-  let text = `${emoji} *${category} COMMANDS*\n━━━━━━━━━━━━━━━━━━\n`;
+  let text = `${emoji} *${safeString(category)} COMMANDS*\n━━━━━━━━━━━━━━━━━━\n`;
   for (const cmd of commands) {
     text += formatCommandHelp(cmd) + "\n";
   }
@@ -97,7 +95,7 @@ export function createSystemCommands(deps) {
   const prefix = process.env.BOT_PREFIX || "!";
   const botName = process.env.BOT_NAME || "BOT WA";
   const ownerName = process.env.OWNER_NAME || "Owner";
-  const ownerNumber = (process.env.OWNER_NUMBER || "").replace(/\D/g, "");
+  const ownerNumber = safeString(process.env.OWNER_NUMBER).replace(/\D/g, "");
 
   return [
     {
@@ -112,15 +110,15 @@ export function createSystemCommands(deps) {
         
         const args = ctx.args || [];
         if (args.length > 0) {
-          const requestedCat = args[0].toLowerCase();
-          const matchedCat = allCategories.find(c => c.toLowerCase() === requestedCat);
+          const requestedCat = safeString(args[0]).toLowerCase();
+          const matchedCat = allCategories.find(c => safeString(c).toLowerCase() === requestedCat);
           if (matchedCat) {
             const cmds = categoryMap.get(matchedCat) || [];
             const text = buildCategoryDetailText(matchedCat, cmds, prefix);
             logOk(ctx, `help category=${matchedCat}`);
             return reply(sock, msg, text);
           }
-          return reply(sock, msg, `❌ Kategori "${args[0]}" tidak ditemukan.\nKategori tersedia: ${allCategories.join(", ")}`);
+          return reply(sock, msg, `❌ Kategori "${safeString(args[0])}" tidak ditemukan.\nKategori tersedia: ${allCategories.map(safeString).join(", ")}`);
         }
 
         const text = buildMenuText(msg, categoryMap, allCategories, prefix, botName, ownerName, ownerNumber);
@@ -164,17 +162,17 @@ export function createSystemCommands(deps) {
       execute: async ctx => {
         const q = getDownloaderQueueSnapshot();
         const activeLine = q.active
-          ? `🎬 Sedang diproses: ${q.active.name} (${q.active.runningSec} detik)`
+          ? `🎬 Sedang diproses: ${safeString(q.active?.name)} (${q.active?.runningSec ?? 0} detik)`
           : "🎬 Sedang diproses: -";
         const textQueue = `
 🧾 *STATUS ANTRIAN DOWNLOADER*
 ━━━━━━━━━━━━━━━━━━
 ${activeLine}
-📥 Menunggu: ${q.waiting}
-🧮 Total antrean: ${q.total}
+📥 Menunggu: ${q.waiting ?? 0}
+🧮 Total antrean: ${q.total ?? 0}
 `.trim();
 
-        logOk(ctx, `antrian total=${q.total}`);
+        logOk(ctx, `antrian total=${q.total ?? 0}`);
         return ctx.reply(ctx.sock, ctx.msg, textQueue);
       }
     },
@@ -198,7 +196,7 @@ ${activeLine}
           ? topCommands
               .map(([name, s], i) => {
                 const avg = s.total ? Math.round(s.totalDurationMs / s.total) : 0;
-                return `${i + 1}. ${name} (${s.total}x | ok ${s.ok} | fail ${s.fail} | avg ${avg}ms)`;
+                return `${i + 1}. ${safeString(name)} (${s.total}x | ok ${s.ok} | fail ${s.fail} | avg ${avg}ms)`;
               })
               .join("\n")
           : "-";
