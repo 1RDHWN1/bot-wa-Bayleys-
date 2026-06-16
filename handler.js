@@ -60,7 +60,9 @@ import {
   normalizeYouTubeUrl,
   getWeatherBMKG, 
   getWeatherIcon,
-  getWeatherTomorrow
+  getWeatherTomorrow,
+  tavilySearch,
+  formatTavilyForPrompt
 } from "./utils.js";
 
 
