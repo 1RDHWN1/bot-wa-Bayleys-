@@ -20,7 +20,7 @@ export function createAudioCommands(deps) {
       description: "Teks ke voice note (TTS)",
       usage: "!suara <teks> (max 250 karakter)",
       subCommands: [
-        { names: "suara <teks>", description: "Ubah teks jadi voice note (max 250 karakter)" }
+        { names: ["suara <teks>"], description: "Ubah teks jadi voice note (max 250 karakter)" }
       ],
       execute: async ctx => {
         const input = String(ctx.input || "");
