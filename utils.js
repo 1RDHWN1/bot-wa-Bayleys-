@@ -1084,3 +1084,162 @@ export async function searchYouTubeMusic(query) {
     });
   });
 }
+// ============================================================
+// TAVILY WEB SEARCH (untuk AI akses internet)
+// ============================================================
+
+const TAVILY_API_KEY = process.env.TAVILY_API_KEY || "";
+const TAVILY_ENDPOINT = "https://api.tavily.com/search";
+
+const tavilyCache = new Map();
+const TAVILY_CACHE_TTL_MS = 10 * 60 * 1000; // 10 menit
+const TAVILY_MAX_RESULTS = 5;
+
+function normalizeTavilyQuery(query = "") {
+  return String(query || "").trim().toLowerCase();
+}
+
+function pruneTavilyCache() {
+  const now = Date.now();
+  for (const [key, entry] of tavilyCache.entries()) {
+    if (now - entry.at > TAVILY_CACHE_TTL_MS) {
+      tavilyCache.delete(key);
+    }
+  }
+}
+
+export async function tavilySearch(query, options = {}) {
+  const {
+    maxResults = TAVILY_MAX_RESULTS,
+    searchDepth = "advanced", // "basic" | "advanced"
+    includeAnswer = true,
+    includeRawContent = false,
+    includeImages = false,
+    includeImageDescriptions = false,
+    timeRange = null, // "day" | "week" | "month" | "year" | null
+    topic = "general" // "general" | "news" | "finance"
+  } = options;
+
+  if (!TAVILY_API_KEY) {
+    throw new Error("TAVILY_API_KEY belum diset di environment");
+  }
+
+  const cacheKey = normalizeTavilyQuery(`${query}|${maxResults}|${searchDepth}|${topic}|${timeRange || ""}`);
+  pruneTavilyCache();
+
+  const cached = tavilyCache.get(cacheKey);
+  if (cached && Date.now() - cached.at <= TAVILY_CACHE_TTL_MS) {
+    return { ...cached.data, _cache: { hit: true } };
+  }
+
+  const payload = {
+    api_key: TAVILY_API_KEY,
+    query,
+    max_results: maxResults,
+    search_depth: searchDepth,
+    include_answer: includeAnswer,
+    include_raw_content: includeRawContent,
+    include_images: includeImages,
+    include_image_descriptions: includeImageDescriptions,
+    topic
+  };
+
+  if (timeRange) {
+    payload.time_range = timeRange;
+  }
+
+  try {
+    const response = await axios.post(TAVILY_ENDPOINT, payload, {
+      timeout: 15000,
+      headers: { "Content-Type": "application/json" }
+    });
+
+    const data = response.data;
+
+    // Format results untuk konsumsi AI
+    const formatted = {
+      query: data.query || query,
+      answer: data.answer || "",
+      results: (data.results || []).map((r, i) => ({
+        index: i + 1,
+        title: r.title || "",
+        url: r.url || "",
+        content: r.content || r.snippet || "",
+        score: r.score || 0,
+        publishedDate: r.published_date || null
+      })),
+      images: data.images || [],
+      responseTime: data.response_time || 0
+    };
+
+    // Cache
+    tavilyCache.set(cacheKey, { data: formatted, at: Date.now() });
+
+    return { ...formatted, _cache: { hit: false } };
+  } catch (err) {
+    if (err?.response?.data) {
+      throw new Error(`Tavily API error: ${JSON.stringify(err.response.data)}`);
+    }
+    throw new Error(`Tavily search gagal: ${err?.message || err}`);
+  }
+}
+
+// Helper: format hasil search untuk dipakai di prompt AI
+export function formatTavilyForPrompt(searchResult) {
+  if (!searchResult?.results?.length) {
+    return "Tidak ada hasil pencarian.";
+  }
+
+  let text = `Hasil pencarian web untuk: "${searchResult.query}"\n\n`;
+
+  if (searchResult.answer) {
+    text += `📝 Ringkasan AI: ${searchResult.answer}\n\n`;
+  }
+
+  text += "🔗 Sumber:\n";
+  for (const r of searchResult.results) {
+    text += `${r.index}. [${r.title}](${r.url})\n   ${r.content?.slice(0, 200)}...\n\n`;
+  }
+
+  return text.trim();
+}
+
+// Function calling schema untuk OpenRouter
+export const TAVILY_FUNCTION_SCHEMA = {
+  name: "web_search",
+  description: "Cari informasi terbaru di internet menggunakan Tavily. Gunakan untuk fakta terbaru, berita, harga, cuaca, dll.",
+  parameters: {
+    type: "object",
+    properties: {
+      query: {
+        type: "string",
+        description: "Query pencarian (bahasa Indonesia/Inggris). Jelas & spesifik."
+      },
+      maxResults: {
+        type: "integer",
+        description: "Jumlah hasil (default 5, max 10)",
+        minimum: 1,
+        maximum: 10,
+        default: 5
+      },
+      searchDepth: {
+        type: "string",
+        enum: ["basic", "advanced"],
+        description: "Kedalaman pencarian: basic=cepat, advanced=lebih lengkap (default advanced)",
+        default: "advanced"
+      },
+      topic: {
+        type: "string",
+        enum: ["general", "news", "finance"],
+        description: "Topik pencarian (default general)",
+        default: "general"
+      },
+      timeRange: {
+        type: "string",
+        enum: ["day", "week", "month", "year"],
+        description: "Rentang waktu hasil (opsional)"
+      }
+    },
+    required: ["query"]
+  }
+};
