@@ -37,9 +37,22 @@ export async function askAI(text, sender = "default", options = {}) {
       max_tokens: 480,
       temperature: 0.6,
       top_p: 0.9,
-      // Enable function calling
+      // Enable function calling (fallback if model doesn't support)
       tools: enableSearch ? [TAVILY_FUNCTION_SCHEMA] : undefined,
       tool_choice: enableSearch ? "auto" : "none"
+    }).catch(async (err) => {
+      // If function calling not supported (400), retry without tools
+      if (err?.response?.status === 400 && enableSearch) {
+        console.warn("[AI] Function calling not supported, retrying without tools...");
+        return postChatCompletion({
+          model,
+          messages,
+          max_tokens: 480,
+          temperature: 0.6,
+          top_p: 0.9
+        });
+      }
+      throw err;
     });
 
     const choice = res.data?.choices?.[0];
@@ -117,6 +130,18 @@ export async function askAI(text, sender = "default", options = {}) {
     temperature: 0.6,
     top_p: 0.9,
     tools: undefined
+  }).catch(async (err) => {
+    if (err?.response?.status === 400) {
+      console.warn("[AI] Final call failed, retrying without tools...");
+      return postChatCompletion({
+        model,
+        messages,
+        max_tokens: 480,
+        temperature: 0.6,
+        top_p: 0.9
+      });
+    }
+    throw err;
   });
 
   const finalContent = finalRes.data?.choices?.[0]?.message?.content?.trim();
