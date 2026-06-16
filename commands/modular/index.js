@@ -6,6 +6,7 @@ import { createAdminCommands } from "./admin.js";
 import { createAICommands } from "./ai.js";
 import { createLegacyMediaCommands } from "./legacy-media.js";
 import { createGameCommands } from "./game.js";
+import { createUtilityCommands } from "./utility.js";
 import { createDownloaderReplyPassiveHandler } from "./passive/downloader-reply.js";
 
 export function createModularCommands(deps) {
@@ -17,7 +18,8 @@ export function createModularCommands(deps) {
     ...createAdminCommands(deps),
     ...createAICommands(deps),
     ...createGameCommands(deps),
-    ...createLegacyMediaCommands(deps)
+    ...createLegacyMediaCommands(deps),
+    ...createUtilityCommands(deps)
   ];
 }
 
