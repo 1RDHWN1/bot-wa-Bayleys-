@@ -44,7 +44,10 @@ function buildMenuText(msg, categoryMap, allCategories, prefix, botName, ownerNa
 
   let text = `🤖 *${safeString(botName)} — HELP MENU*\n*Halo ${senderName}*\n\nGunakan \`${prefix}help <kategori>\` untuk lihat detail kategori.\nContoh: \`${prefix}help ai\`, \`${prefix}help downloader\`\n\n`;
 
-  for (const cat of allCategories) {
+  // Ensure allCategories are strings
+  const safeCategories = Array.isArray(allCategories) ? allCategories.map(safeString) : [];
+  
+  for (const cat of safeCategories) {
     const cmds = categoryMap.get(cat) || [];
     if (cmds.length === 0) continue;
     const emoji = {
@@ -68,7 +71,7 @@ function buildCategoryDetailText(category, commands, prefix) {
     "Game": "🎰", "Schedule": "🗓️", "Admin": "🛡️",
     "Utility": "🔧", "Owner": "👑", "Lainnya": "📦"
   };
-  const emoji = emojiMap[category] || "📦";
+  const emoji = emojiMap[safeString(category)] || "📦";
   
   let text = `${emoji} *${safeString(category)} COMMANDS*\n━━━━━━━━━━━━━━━━━━\n`;
   for (const cmd of commands) {
@@ -108,20 +111,23 @@ export function createSystemCommands(deps) {
         const categoryMap = getCategoryMap();
         const allCategories = getAllCategories();
         
+        // Ensure allCategories are strings
+        const safeCategories = Array.isArray(allCategories) ? allCategories.map(safeString) : [];
+        
         const args = ctx.args || [];
         if (args.length > 0) {
           const requestedCat = safeString(args[0]).toLowerCase();
-          const matchedCat = allCategories.find(c => safeString(c).toLowerCase() === requestedCat);
+          const matchedCat = safeCategories.find(c => safeString(c).toLowerCase() === requestedCat);
           if (matchedCat) {
             const cmds = categoryMap.get(matchedCat) || [];
             const text = buildCategoryDetailText(matchedCat, cmds, prefix);
             logOk(ctx, `help category=${matchedCat}`);
             return reply(sock, msg, text);
           }
-          return reply(sock, msg, `❌ Kategori "${safeString(args[0])}" tidak ditemukan.\nKategori tersedia: ${allCategories.map(safeString).join(", ")}`);
+          return reply(sock, msg, `❌ Kategori "${safeString(args[0])}" tidak ditemukan.\nKategori tersedia: ${safeCategories.join(", ")}`);
         }
 
-        const text = buildMenuText(msg, categoryMap, allCategories, prefix, botName, ownerName, ownerNumber);
+        const text = buildMenuText(msg, categoryMap, safeCategories, prefix, botName, ownerName, ownerNumber);
         logOk(ctx, "menu overview terkirim");
         return reply(sock, msg, text);
       }
