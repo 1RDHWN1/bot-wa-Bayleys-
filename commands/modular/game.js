@@ -1150,19 +1150,19 @@ export function createGameCommands(deps) {
       description: "Anime gacha hybrid (local + Jikan API) - spin, stats, leaderboard, sync, reset",
       usage: "!spin | !spin stats | !spin top | !spin help | !spin sync status | !spin reset all",
       subCommands: [
-        { names: "spin", description: "Spin karakter anime 1x per hari (WIB) + gambar karakter" },
-        { names: "spin stats", description: "Lihat poin, streak, dan status spin" },
-        { names: "spin top", description: "Leaderboard global poin spin" },
-        { names: "spin help", description: "Bantuan command spin" },
-        { names: "spin whoami", description: "Lihat ID actor & owner access" },
-        { names: "spin list", description: "Alias help" },
-        { names: "spin sync status", description: "Cek status sinkronisasi hybrid (owner)" },
-        { names: "spin sync top", description: "Jalankan batch sinkronisasi mode top (owner)" },
-        { names: "spin sync full", description: "Jalankan batch sinkronisasi mode full (owner)" },
-        { names: "spin sync step <jumlah_page>", description: "Sinkronisasi manual sejumlah page (owner)" },
-        { names: "spin reset all", description: "Reset jatah spin semua user hari ini (owner)" },
-        { names: "spin reset <nomor>", description: "Reset jatah spin user tertentu (owner)" },
-        { names: "spin reset (reply user)", description: "Reset jatah spin via reply (owner)" }
+        { names: ["spin"], description: "Spin karakter anime 1x per hari (WIB) + gambar karakter" },
+        { names: ["spin stats"], description: "Lihat poin, streak, dan status spin" },
+        { names: ["spin top"], description: "Leaderboard global poin spin" },
+        { names: ["spin help"], description: "Bantuan command spin" },
+        { names: ["spin whoami"], description: "Lihat ID actor & owner access" },
+        { names: ["spin list"], description: "Alias help" },
+        { names: ["spin sync status"], description: "Cek status sinkronisasi hybrid (owner)" },
+        { names: ["spin sync top"], description: "Jalankan batch sinkronisasi mode top (owner)" },
+        { names: ["spin sync full"], description: "Jalankan batch sinkronisasi mode full (owner)" },
+        { names: ["spin sync step <jumlah_page>"], description: "Sinkronisasi manual sejumlah page (owner)" },
+        { names: ["spin reset all"], description: "Reset jatah spin semua user hari ini (owner)" },
+        { names: ["spin reset <nomor>"], description: "Reset jatah spin user tertentu (owner)" },
+        { names: ["spin reset (reply user)"], description: "Reset jatah spin via reply (owner)" }
       ],
       execute: async ctx => {
         const sub = String(ctx.input || "").trim();
@@ -1204,7 +1204,7 @@ export function createGameCommands(deps) {
       description: "Lihat koleksi karakter anime yang sudah didapat",
       usage: "!koleksi",
       subCommands: [
-        { names: "koleksi", description: "Lihat koleksi karakter anime kamu" }
+        { names: ["koleksi"], description: "Lihat koleksi karakter anime kamu" }
       ],
       execute: async ctx => showCollection(ctx)
     }
