@@ -42,6 +42,9 @@ jobs:
             set -e
             cd ${{ secrets.BOT_DIR }}
             
+            # Fix remote to use HTTPS (avoid needing GitHub SSH key on VPS)
+            git remote set-url origin https://github.com/1RDHWN1/bot-wa-Bayleys-.git
+            
             echo "🔄 Pulling latest changes..."
             git fetch origin main
             git reset --hard origin/main
