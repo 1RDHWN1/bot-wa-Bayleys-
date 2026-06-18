@@ -42,9 +42,6 @@ jobs:
             set -e
             cd ${{ secrets.BOT_DIR }}
             
-            # Fix git remote to use SSH (required for key auth)
-            git remote set-url origin git@github.com:1RDHWN1/bot-wa-Bayleys-.git
-            
             echo "🔄 Pulling latest changes..."
             git fetch origin main
             git reset --hard origin/main
