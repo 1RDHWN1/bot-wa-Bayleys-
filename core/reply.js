@@ -27,7 +27,7 @@ export function createReplyHelper(footerText) {
       // > quote → > quote (keep as is)
       // | tabel | markdown | → convert to key: value lines
       .replace(/\|([^|]+)\|([^|]+)\|/g, (match, ...parts) => {
-        const cells = parts.slice(0, -1).map(c => c.trim()).filter(Boolean);
+        const cells = parts.slice(0, -1).map(c => String(c || "").trim()).filter(Boolean);
         if (cells.length >= 2) {
           return cells.map((c, i) => i % 2 === 0 ? `*${c}*` : c).join(': ');
         }
