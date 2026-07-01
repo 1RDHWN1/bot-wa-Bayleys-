@@ -44,7 +44,7 @@ export function createCommandRouter({ prefix, commands, passiveHandlers = [], gu
   }
 
   async function handle(ctx) {
-    if (!ctx.text) return false;
+    if (typeof ctx.text !== 'string') return false;
     const passiveHandled = await handlePassive(ctx);
     if (passiveHandled) return true;
     if (!ctx.text.startsWith(prefix)) return false;
