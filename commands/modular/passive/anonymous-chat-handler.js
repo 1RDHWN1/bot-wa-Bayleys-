@@ -51,6 +51,13 @@ export function createAnonymousPassiveHandler(deps) {
         // Cek media dari innerType
         const isMedia = ["imageMessage", "videoMessage", "stickerMessage", "audioMessage", "documentMessage"].includes(innerType);
         
+        // Deteksi viewOnce alternatif (kadangkala viewOnce disematkan langsung di dalam imageMessage)
+        if (isMedia && !isViewOnce) {
+          if (innerMsg[innerType]?.viewOnce) {
+            isViewOnce = true;
+          }
+        }
+        
         if (isMedia) {
           // Buat format msg tiruan dengan innerMsg yang sudah dibongkar dari bungkusannya
           // agar downloadMediaMessage selalu bisa menemukan imageMessage dsb.
