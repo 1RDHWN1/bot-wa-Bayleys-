@@ -29,7 +29,7 @@ async function startBot() {
   const sock = makeWASocket({
     auth: state,
     logger: Pino({ level: "silent" }),
-    browser: Browsers.macOS("Desktop"),
+    browser: ["Ubuntu", "Chrome", "20.0.04"],
     version
   });
 
