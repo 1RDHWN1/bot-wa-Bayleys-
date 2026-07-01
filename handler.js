@@ -1122,6 +1122,7 @@ function getModularRouter() {
     tagAll,
     tagAdmin,
     logInfo,
+    logWarn,
     logError,
     getErrorMessage,
     logCommandResult,

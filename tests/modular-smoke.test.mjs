@@ -118,6 +118,8 @@ function createDeps() {
     logError: () => {},
     getErrorMessage: err => err?.message || String(err),
     logCommandResult: () => {},
+    getCategoryMap: () => new Map([["System", [{names: ["help"], description: "Help"}]]]),
+    getAllCategories: () => ["System"],
     getReminders: () => reminders,
     setReminders: next => {
       reminders.length = 0;
