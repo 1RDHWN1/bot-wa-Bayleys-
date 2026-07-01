@@ -7,6 +7,9 @@ export function createAnonymousPassiveHandler(deps) {
   return async function anonymousChatHandler(ctx) {
     const { sock, msg, sender, text } = ctx;
 
+    // Abaikan pesan dari bot sendiri untuk mencegah infinite loop
+    if (msg.key.fromMe) return false;
+
     // Abaikan jika pengirim tidak dalam obrolan
     if (!anonState.pairs.has(sender)) {
       return false; 
