@@ -1231,14 +1231,15 @@ function getModularRouter() {
 export default async function handler(sock, msg) {
   const jid = msg?.key?.remoteJid || "unknown";
   const sender = msg?.key?.participant || msg?.key?.remoteJid || "unknown";
-  const text = getText(msg)?.trim();
+  const text = (getText(msg) || "").trim();
 
   try {
     activeSockForJobs = sock;
-    if (!text) return;
+    
+    if (!msg?.message) return;
 
     logInfo(
-      `CMD from ${sender.split("@")[0]} | ${jid.endsWith("@g.us") ? "GROUP" : "PRIVATE"} | ${text}`
+      `CMD from ${sender.split("@")[0]} | ${jid.endsWith("@g.us") ? "GROUP" : "PRIVATE"} | ${text || "[MEDIA/NO-TEXT]"}`
     );
 
 // tapi izinkan command fromMe di private/grup
