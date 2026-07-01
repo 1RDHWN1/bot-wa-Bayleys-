@@ -58,6 +58,7 @@ export function createAnonymousPassiveHandler(deps) {
           }
         }
         
+        if (isMedia) {
           if (isViewOnce) {
             // Karena Baileys `sendMessage` menghasilkan format viewOnceMessage (V1) yang sudah
             // usang dan tidak didukung WhatsApp terbaru, kita harus membungkusnya secara manual 
