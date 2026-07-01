@@ -57,9 +57,9 @@ jobs:
             npm ci --production --prefer-offline || npm ci --production
             
             echo "🔁 Hard restart bot (clear require cache)..."
-            pm2 delete index 2>/dev/null || true
-            pm2 flush
-            pm2 start index.js --name index --update-env
+            pm2 delete index > /dev/null 2>&1 || true
+            pm2 flush > /dev/null 2>&1
+            pm2 start index.js --name index --update-env > /dev/null 2>&1
             
             echo "✅ Deploy selesai!"
-            pm2 status
+            pm2 status > /dev/null 2>&1
