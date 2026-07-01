@@ -76,7 +76,10 @@ async function startBot() {
   /* ===== MESSAGE HANDLER ===== */
   sock.ev.on("messages.upsert", async ({ messages }) => {
     const msg = messages?.[0];
-    if (!msg?.message) return;
+    if (!msg?.message) {
+      console.warn("⚠️ Received upsert without msg.message:", JSON.stringify(msg, null, 2));
+      return;
+    }
 
     const jid = msg.key.remoteJid;
 
