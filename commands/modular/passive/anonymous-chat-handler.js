@@ -60,19 +60,48 @@ export function createAnonymousPassiveHandler(deps) {
         
         if (isMedia) {
           if (isViewOnce) {
-            // Karena Baileys `sendMessage` menghasilkan format viewOnceMessage (V1) yang sudah
-            // usang dan tidak didukung WhatsApp terbaru, kita harus membungkusnya secara manual 
-            // ke viewOnceMessageV2 dan menggunakan sock.relayMessage.
-            const mediaContent = { ...innerMsg[innerType] };
-            delete mediaContent.contextInfo; // Hapus jejak pengirim asli (metadata)
+            // WORKAROUND UNTUK VIEWONCE V2:
+            // 1. Kirim media ke nomor bot sendiri agar Baileys mengunggahnya & membuat kunci kriptografi (mediaKey dll)
+            const botJid = sock.user.id.split(":")[0] + "@s.whatsapp.net";
+            const sendOptions = {};
             
-            await sock.relayMessage(partner, {
-              viewOnceMessageV2: {
-                message: {
-                  [innerType]: mediaContent
+            if (innerType === "imageMessage") {
+              sendOptions.image = buffer;
+              sendOptions.caption = innerMsg.imageMessage?.caption || "";
+            } else if (innerType === "videoMessage") {
+              sendOptions.video = buffer;
+              sendOptions.caption = innerMsg.videoMessage?.caption || "";
+              sendOptions.gifPlayback = innerMsg.videoMessage?.gifPlayback;
+            } else if (innerType === "ptvMessage") {
+              sendOptions.video = buffer;
+              sendOptions.ptv = true;
+            } else if (innerType === "audioMessage") {
+              sendOptions.audio = buffer;
+              sendOptions.ptt = innerMsg.audioMessage?.ptt || false;
+            } else {
+              sendOptions.document = buffer;
+            }
+            
+            const sentToSelf = await sock.sendMessage(botJid, sendOptions);
+            
+            // 2. Ekstrak pesan media mentah yang sudah terunggah dari hasil kiriman tadi
+            // (sock.sendMessage terkadang membungkus pesan dalam ephemeralMessage jika mode sementara aktif)
+            const selfMsg = sentToSelf.message;
+            const uploadedMediaMsg = selfMsg[innerType] || selfMsg.ephemeralMessage?.message?.[innerType] || selfMsg.viewOnceMessage?.message?.[innerType];
+            
+            if (uploadedMediaMsg) {
+              const mediaContent = { ...uploadedMediaMsg };
+              delete mediaContent.contextInfo; // Bersihkan metadata
+              
+              // 3. Bungkus dengan viewOnceMessageV2 (format baru WhatsApp) dan teruskan ke pasangan
+              await sock.relayMessage(partner, {
+                viewOnceMessageV2: {
+                  message: {
+                    [innerType]: mediaContent
+                  }
                 }
-              }
-            }, { messageId: generateMessageID() });
+              }, { messageId: generateMessageID() });
+            }
           } else {
             // Selalu teruskan msg asli agar fungsi decrypt downloadMediaMessage tidak error (kehilangan konteks kriptografi)
             const buffer = await downloadMediaMessage(
