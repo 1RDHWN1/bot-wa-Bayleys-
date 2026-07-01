@@ -49,7 +49,7 @@ export function createAnonymousPassiveHandler(deps) {
         }
 
         // Cek media dari innerType
-        const isMedia = ["imageMessage", "videoMessage", "stickerMessage", "audioMessage", "documentMessage"].includes(innerType);
+        const isMedia = ["imageMessage", "videoMessage", "stickerMessage", "audioMessage", "documentMessage", "ptvMessage"].includes(innerType);
         
         // Deteksi viewOnce alternatif (kadangkala viewOnce disematkan langsung di dalam imageMessage)
         if (isMedia && !isViewOnce) {
@@ -59,12 +59,9 @@ export function createAnonymousPassiveHandler(deps) {
         }
         
         if (isMedia) {
-          // Buat format msg tiruan dengan innerMsg yang sudah dibongkar dari bungkusannya
-          // agar downloadMediaMessage selalu bisa menemukan imageMessage dsb.
-          const downloadMsg = { key: msg.key, message: { [innerType]: innerMsg[innerType] } };
-          
+          // Selalu teruskan msg asli agar fungsi decrypt downloadMediaMessage tidak error (kehilangan konteks kriptografi)
           const buffer = await downloadMediaMessage(
-            downloadMsg, 
+            msg, 
             "buffer", 
             {}, 
             { logger: sock.logger, reuploadRequest: sock.updateMediaMessage }
@@ -76,8 +73,10 @@ export function createAnonymousPassiveHandler(deps) {
             await sock.sendMessage(partner, { sticker: buffer }); // Stiker tidak ada viewOnce
           } else if (innerType === "videoMessage") {
             await sock.sendMessage(partner, { video: buffer, caption: innerMsg.videoMessage?.caption || "", gifPlayback: innerMsg.videoMessage?.gifPlayback, viewOnce: isViewOnce });
+          } else if (innerType === "ptvMessage") {
+            await sock.sendMessage(partner, { video: buffer, ptv: true }); // Video Note (bulat)
           } else if (innerType === "audioMessage") {
-            await sock.sendMessage(partner, { audio: buffer, ptt: innerMsg.audioMessage?.ptt || false }); // VN bisa dikirim biasa
+            await sock.sendMessage(partner, { audio: buffer, ptt: innerMsg.audioMessage?.ptt || false }); // VN
           } else if (innerType === "documentMessage") {
             await sock.sendMessage(partner, { document: buffer, mimetype: innerMsg.documentMessage?.mimetype, fileName: innerMsg.documentMessage?.fileName });
           }
