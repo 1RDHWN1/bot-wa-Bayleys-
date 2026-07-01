@@ -1,4 +1,4 @@
-import { getContentType } from "@whiskeysockets/baileys";
+import { getContentType, downloadMediaMessage } from "@whiskeysockets/baileys";
 import { anonState } from "../anonymous-chat.js";
 
 export function createAnonymousPassiveHandler(deps) {
@@ -35,14 +35,37 @@ export function createAnonymousPassiveHandler(deps) {
         await sock.sendMessage(partner, { text: rawText });
       } else {
         // Media (gambar, stiker, audio, video, dokumen)
-        // Kita gunakan fitur forward bawaan agar tidak perlu download-upload ulang
-        await sock.sendMessage(partner, { forward: msg });
+        // Fitur { forward: msg } bawaan sering bug atau bocor metadata pengirim asli,
+        // jadi kita download dan re-upload medianya secara native.
+        const isMedia = ["imageMessage", "videoMessage", "stickerMessage", "audioMessage", "documentMessage"].includes(type);
+        
+        if (isMedia) {
+          const buffer = await downloadMediaMessage(
+            msg, 
+            "buffer", 
+            {}, 
+            { logger: sock.logger, reuploadRequest: sock.updateMediaMessage }
+          );
+          
+          if (type === "imageMessage") {
+            await sock.sendMessage(partner, { image: buffer, caption: msg.message.imageMessage?.caption || "" });
+          } else if (type === "stickerMessage") {
+            await sock.sendMessage(partner, { sticker: buffer });
+          } else if (type === "videoMessage") {
+            await sock.sendMessage(partner, { video: buffer, caption: msg.message.videoMessage?.caption || "", gifPlayback: msg.message.videoMessage?.gifPlayback });
+          } else if (type === "audioMessage") {
+            await sock.sendMessage(partner, { audio: buffer, ptt: msg.message.audioMessage?.ptt || false });
+          } else if (type === "documentMessage") {
+            await sock.sendMessage(partner, { document: buffer, mimetype: msg.message.documentMessage?.mimetype, fileName: msg.message.documentMessage?.fileName });
+          }
+        } else {
+          // Fallback untuk tipe pesan aneh lainnya
+          await sock.sendMessage(partner, { forward: msg });
+        }
       }
       
       logInfo(`ANON-CHAT | Relayed message from ${sender.split("@")[0]} to ${partner.split("@")[0]}`);
       
-      // Mengembalikan true berarti pesan ini sudah di-handle sepenuhnya, 
-      // router tidak perlu mengecek prefix/command lagi untuk pesan ini.
       return true; 
     } catch (err) {
       logWarn(`ANON-CHAT | Failed to relay message: ${err.message}`);
