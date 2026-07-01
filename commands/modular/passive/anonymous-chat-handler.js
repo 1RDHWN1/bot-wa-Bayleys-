@@ -1,4 +1,4 @@
-import { getContentType, downloadMediaMessage } from "@whiskeysockets/baileys";
+import { getContentType, downloadMediaMessage, generateMessageID } from "@whiskeysockets/baileys";
 import { anonState } from "../anonymous-chat.js";
 
 export function createAnonymousPassiveHandler(deps) {
@@ -58,27 +58,42 @@ export function createAnonymousPassiveHandler(deps) {
           }
         }
         
-        if (isMedia) {
-          // Selalu teruskan msg asli agar fungsi decrypt downloadMediaMessage tidak error (kehilangan konteks kriptografi)
-          const buffer = await downloadMediaMessage(
-            msg, 
-            "buffer", 
-            {}, 
-            { logger: sock.logger, reuploadRequest: sock.updateMediaMessage }
-          );
-          
-          if (innerType === "imageMessage") {
-            await sock.sendMessage(partner, { image: buffer, caption: innerMsg.imageMessage?.caption || "", viewOnce: isViewOnce });
-          } else if (innerType === "stickerMessage") {
-            await sock.sendMessage(partner, { sticker: buffer }); // Stiker tidak ada viewOnce
-          } else if (innerType === "videoMessage") {
-            await sock.sendMessage(partner, { video: buffer, caption: innerMsg.videoMessage?.caption || "", gifPlayback: innerMsg.videoMessage?.gifPlayback, viewOnce: isViewOnce });
-          } else if (innerType === "ptvMessage") {
-            await sock.sendMessage(partner, { video: buffer, ptv: true }); // Video Note (bulat)
-          } else if (innerType === "audioMessage") {
-            await sock.sendMessage(partner, { audio: buffer, ptt: innerMsg.audioMessage?.ptt || false }); // VN
-          } else if (innerType === "documentMessage") {
-            await sock.sendMessage(partner, { document: buffer, mimetype: innerMsg.documentMessage?.mimetype, fileName: innerMsg.documentMessage?.fileName });
+          if (isViewOnce) {
+            // Karena Baileys `sendMessage` menghasilkan format viewOnceMessage (V1) yang sudah
+            // usang dan tidak didukung WhatsApp terbaru, kita harus membungkusnya secara manual 
+            // ke viewOnceMessageV2 dan menggunakan sock.relayMessage.
+            const mediaContent = { ...innerMsg[innerType] };
+            delete mediaContent.contextInfo; // Hapus jejak pengirim asli (metadata)
+            
+            await sock.relayMessage(partner, {
+              viewOnceMessageV2: {
+                message: {
+                  [innerType]: mediaContent
+                }
+              }
+            }, { messageId: generateMessageID() });
+          } else {
+            // Selalu teruskan msg asli agar fungsi decrypt downloadMediaMessage tidak error (kehilangan konteks kriptografi)
+            const buffer = await downloadMediaMessage(
+              msg, 
+              "buffer", 
+              {}, 
+              { logger: sock.logger, reuploadRequest: sock.updateMediaMessage }
+            );
+            
+            if (innerType === "imageMessage") {
+              await sock.sendMessage(partner, { image: buffer, caption: innerMsg.imageMessage?.caption || "" });
+            } else if (innerType === "stickerMessage") {
+              await sock.sendMessage(partner, { sticker: buffer });
+            } else if (innerType === "videoMessage") {
+              await sock.sendMessage(partner, { video: buffer, caption: innerMsg.videoMessage?.caption || "", gifPlayback: innerMsg.videoMessage?.gifPlayback });
+            } else if (innerType === "ptvMessage") {
+              await sock.sendMessage(partner, { video: buffer, ptv: true }); // Video Note (bulat)
+            } else if (innerType === "audioMessage") {
+              await sock.sendMessage(partner, { audio: buffer, ptt: innerMsg.audioMessage?.ptt || false }); // VN
+            } else if (innerType === "documentMessage") {
+              await sock.sendMessage(partner, { document: buffer, mimetype: innerMsg.documentMessage?.mimetype, fileName: innerMsg.documentMessage?.fileName });
+            }
           }
         } else {
           // Fallback untuk tipe pesan aneh lainnya
