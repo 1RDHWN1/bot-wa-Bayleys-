@@ -10,6 +10,13 @@ export function createAnonymousPassiveHandler(deps) {
     // Abaikan pesan dari bot sendiri untuk mencegah infinite loop
     if (msg.key.fromMe) return false;
 
+    // Hanya teruskan pesan jika dikirim dalam sesi private chat dengan bot (bukan grup/status/newsletter)
+    const jid = msg.key.remoteJid || "";
+    const isPrivate = jid.endsWith("@s.whatsapp.net") || jid.endsWith("@lid");
+    if (!isPrivate) {
+      return false;
+    }
+
     // Abaikan jika pengirim tidak dalam obrolan
     if (!anonState.pairs.has(sender)) {
       return false; 

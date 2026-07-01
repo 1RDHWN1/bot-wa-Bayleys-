@@ -91,8 +91,8 @@ export function createAnonymousCommands(deps) {
           logInfo(`ANON-CHAT | user=${sender.split("@")[0]} left queue`);
         } else if (result.status === "stopped") {
           await reply(sock, msg, "🛑 *Obrolan dihentikan.*\nTerima kasih telah menggunakan Live Chat.");
-          // Beri tahu partner
-          await sock.sendMessage(result.partner, { text: "🛑 *Pasanganmu menghentikan obrolan.*\nKetik `!search` untuk mencari pasangan baru." });
+          // Beri tahu partner bahwa obrolan dihentikan oleh pasangan
+          await sock.sendMessage(result.partner, { text: "🛑 *Pasanganmu telah menghentikan obrolan (meninggalkan chat).*\nKetik `!search` untuk mencari pasangan baru." });
           logInfo(`ANON-CHAT | ended between ${sender.split("@")[0]} and ${result.partner.split("@")[0]}`);
         } else {
           await reply(sock, msg, "❌ Kamu sedang tidak mencari atau dalam obrolan anonim.");
@@ -113,7 +113,8 @@ export function createAnonymousCommands(deps) {
         
         if (result.status === "stopped") {
           await reply(sock, msg, "🛑 *Obrolan dihentikan.*");
-          await sock.sendMessage(result.partner, { text: "🛑 *Pasanganmu menghentikan obrolan.*\nKetik `!search` untuk mencari pasangan baru." });
+          // Beri tahu partner bahwa pasangan men-skip obrolan
+          await sock.sendMessage(result.partner, { text: "🛑 *Pasanganmu telah men-skip/melewati obrolan ini.*\nKetik `!search` untuk mencari pasangan baru." });
         }
 
         // Otomatis trigger search
