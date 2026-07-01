@@ -22,30 +22,39 @@ export function createAnonymousPassiveHandler(deps) {
     }
 
     const partner = anonState.pairs.get(sender);
-    const type = getContentType(msg.message);
+    let actualMsg = msg.message;
+    let type = getContentType(actualMsg);
+    
+    // Buka bungkusan pesan sementara (disappearing messages) jika ada
+    if (type === "ephemeralMessage") {
+      actualMsg = actualMsg.ephemeralMessage.message;
+      type = getContentType(actualMsg);
+    }
     
     try {
       if (type === "conversation" || type === "extendedTextMessage") {
         // Pesan teks biasa
-        await sock.sendMessage(partner, { text: rawText });
+        const textToRelay = actualMsg?.conversation || actualMsg?.extendedTextMessage?.text || rawText;
+        await sock.sendMessage(partner, { text: textToRelay });
       } else {
         // Cek apakah pesan adalah viewOnce (sekali lihat)
         let isViewOnce = false;
         let innerType = type;
-        let innerMsg = msg.message;
+        let innerMsg = actualMsg;
         
         if (type === "viewOnceMessage" || type === "viewOnceMessageV2" || type === "viewOnceMessageV2Extension") {
           isViewOnce = true;
-          innerMsg = msg.message[type].message;
+          innerMsg = actualMsg[type].message;
           innerType = getContentType(innerMsg);
         }
 
-        // Cek media dari innerType (apabila viewOnce, maka innerType adalah imageMessage/videoMessage dll)
+        // Cek media dari innerType
         const isMedia = ["imageMessage", "videoMessage", "stickerMessage", "audioMessage", "documentMessage"].includes(innerType);
         
         if (isMedia) {
-          // Buat format msg tiruan agar downloadMediaMessage dapat mengekstrak media dengan benar
-          const downloadMsg = isViewOnce ? { key: msg.key, message: innerMsg } : msg;
+          // Buat format msg tiruan dengan innerMsg yang sudah dibongkar dari bungkusannya
+          // agar downloadMediaMessage selalu bisa menemukan imageMessage dsb.
+          const downloadMsg = { key: msg.key, message: { [innerType]: innerMsg[innerType] } };
           
           const buffer = await downloadMediaMessage(
             downloadMsg, 
