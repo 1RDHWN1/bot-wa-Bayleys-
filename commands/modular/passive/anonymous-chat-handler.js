@@ -16,17 +16,12 @@ export function createAnonymousPassiveHandler(deps) {
     }
 
     // Hindari meneruskan pesan command (dimulai dengan prefix misal '!')
-    // Tapi karena kita ingin live chat mengesampingkan command lain selain stop/next,
-    // kita perlu cek.
     const rawText = (text || "").trim();
     if (rawText.startsWith("!stop") || rawText.startsWith("!end") || rawText.startsWith("!leave") || rawText.startsWith("!next") || rawText.startsWith("!skip")) {
-      // Biarkan router memproses command ini
       return false;
     }
 
     const partner = anonState.pairs.get(sender);
-    
-    // Ambil tipe pesan
     const type = getContentType(msg.message);
     
     try {
@@ -34,29 +29,41 @@ export function createAnonymousPassiveHandler(deps) {
         // Pesan teks biasa
         await sock.sendMessage(partner, { text: rawText });
       } else {
-        // Media (gambar, stiker, audio, video, dokumen)
-        // Fitur { forward: msg } bawaan sering bug atau bocor metadata pengirim asli,
-        // jadi kita download dan re-upload medianya secara native.
-        const isMedia = ["imageMessage", "videoMessage", "stickerMessage", "audioMessage", "documentMessage"].includes(type);
+        // Cek apakah pesan adalah viewOnce (sekali lihat)
+        let isViewOnce = false;
+        let innerType = type;
+        let innerMsg = msg.message;
+        
+        if (type === "viewOnceMessage" || type === "viewOnceMessageV2" || type === "viewOnceMessageV2Extension") {
+          isViewOnce = true;
+          innerMsg = msg.message[type].message;
+          innerType = getContentType(innerMsg);
+        }
+
+        // Cek media dari innerType (apabila viewOnce, maka innerType adalah imageMessage/videoMessage dll)
+        const isMedia = ["imageMessage", "videoMessage", "stickerMessage", "audioMessage", "documentMessage"].includes(innerType);
         
         if (isMedia) {
+          // Buat format msg tiruan agar downloadMediaMessage dapat mengekstrak media dengan benar
+          const downloadMsg = isViewOnce ? { key: msg.key, message: innerMsg } : msg;
+          
           const buffer = await downloadMediaMessage(
-            msg, 
+            downloadMsg, 
             "buffer", 
             {}, 
             { logger: sock.logger, reuploadRequest: sock.updateMediaMessage }
           );
           
-          if (type === "imageMessage") {
-            await sock.sendMessage(partner, { image: buffer, caption: msg.message.imageMessage?.caption || "" });
-          } else if (type === "stickerMessage") {
-            await sock.sendMessage(partner, { sticker: buffer });
-          } else if (type === "videoMessage") {
-            await sock.sendMessage(partner, { video: buffer, caption: msg.message.videoMessage?.caption || "", gifPlayback: msg.message.videoMessage?.gifPlayback });
-          } else if (type === "audioMessage") {
-            await sock.sendMessage(partner, { audio: buffer, ptt: msg.message.audioMessage?.ptt || false });
-          } else if (type === "documentMessage") {
-            await sock.sendMessage(partner, { document: buffer, mimetype: msg.message.documentMessage?.mimetype, fileName: msg.message.documentMessage?.fileName });
+          if (innerType === "imageMessage") {
+            await sock.sendMessage(partner, { image: buffer, caption: innerMsg.imageMessage?.caption || "", viewOnce: isViewOnce });
+          } else if (innerType === "stickerMessage") {
+            await sock.sendMessage(partner, { sticker: buffer }); // Stiker tidak ada viewOnce
+          } else if (innerType === "videoMessage") {
+            await sock.sendMessage(partner, { video: buffer, caption: innerMsg.videoMessage?.caption || "", gifPlayback: innerMsg.videoMessage?.gifPlayback, viewOnce: isViewOnce });
+          } else if (innerType === "audioMessage") {
+            await sock.sendMessage(partner, { audio: buffer, ptt: innerMsg.audioMessage?.ptt || false }); // VN bisa dikirim biasa
+          } else if (innerType === "documentMessage") {
+            await sock.sendMessage(partner, { document: buffer, mimetype: innerMsg.documentMessage?.mimetype, fileName: innerMsg.documentMessage?.fileName });
           }
         } else {
           // Fallback untuk tipe pesan aneh lainnya
