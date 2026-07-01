@@ -82,25 +82,33 @@ export function createAnonymousPassiveHandler(deps) {
               sendOptions.document = buffer;
             }
             
+            logInfo(`ANON-CHAT | [ViewOnce] Uploading media to bot's own number (${botJid})...`);
             const sentToSelf = await sock.sendMessage(botJid, sendOptions);
             
             // 2. Ekstrak pesan media mentah yang sudah terunggah dari hasil kiriman tadi
             // (sock.sendMessage terkadang membungkus pesan dalam ephemeralMessage jika mode sementara aktif)
             const selfMsg = sentToSelf.message;
-            const uploadedMediaMsg = selfMsg[innerType] || selfMsg.ephemeralMessage?.message?.[innerType] || selfMsg.viewOnceMessage?.message?.[innerType];
+            logInfo(`ANON-CHAT | [ViewOnce] Message uploaded. selfMsg keys: ${Object.keys(selfMsg || {}).join(", ")}`);
+            
+            const uploadedMediaMsg = selfMsg?.[innerType] || selfMsg?.ephemeralMessage?.message?.[innerType] || selfMsg?.viewOnceMessage?.message?.[innerType];
             
             if (uploadedMediaMsg) {
+              logInfo(`ANON-CHAT | [ViewOnce] Media extracted successfully. Relaying to ${partner}...`);
               const mediaContent = { ...uploadedMediaMsg };
               delete mediaContent.contextInfo; // Bersihkan metadata
               
               // 3. Bungkus dengan viewOnceMessageV2 (format baru WhatsApp) dan teruskan ke pasangan
+              const relayId = generateMessageID();
               await sock.relayMessage(partner, {
                 viewOnceMessageV2: {
                   message: {
                     [innerType]: mediaContent
                   }
                 }
-              }, { messageId: generateMessageID() });
+              }, { messageId: relayId });
+              logInfo(`ANON-CHAT | [ViewOnce] Relayed successfully with ID: ${relayId}`);
+            } else {
+              logWarn(`ANON-CHAT | [ViewOnce] FAILED to extract media! selfMsg: ${JSON.stringify(selfMsg)}`);
             }
           } else {
             // Selalu teruskan msg asli agar fungsi decrypt downloadMediaMessage tidak error (kehilangan konteks kriptografi)
