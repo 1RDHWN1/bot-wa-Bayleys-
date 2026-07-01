@@ -1236,7 +1236,7 @@ export default async function handler(sock, msg) {
   try {
     activeSockForJobs = sock;
     
-    if (!msg?.message) return;
+    if (!msg?.message && !msg?.key?.isViewOnce) return;
 
     logInfo(
       `CMD from ${sender.split("@")[0]} | ${jid.endsWith("@g.us") ? "GROUP" : "PRIVATE"} | ${text || "[MEDIA/NO-TEXT]"}`

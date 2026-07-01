@@ -76,7 +76,7 @@ async function startBot() {
   /* ===== MESSAGE HANDLER ===== */
   sock.ev.on("messages.upsert", async ({ messages }) => {
     const msg = messages?.[0];
-    if (!msg?.message) {
+    if (!msg?.message && !msg?.key?.isViewOnce) {
       console.warn("⚠️ Received upsert without msg.message:", JSON.stringify(msg, null, 2));
       return;
     }

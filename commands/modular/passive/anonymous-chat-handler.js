@@ -22,6 +22,19 @@ export function createAnonymousPassiveHandler(deps) {
     }
 
     const partner = anonState.pairs.get(sender);
+
+    // Tangani View Once Stub (saat Baileys tidak bisa mendekripsi View Once dari LID/versi baru)
+    if (!msg.message && msg.key?.isViewOnce) {
+      logWarn(`ANON-CHAT | Empty View Once stub received from ${sender}`);
+      try {
+        await sock.sendMessage(sender, { text: "⚠️ _Maaf, bot tidak dapat meneruskan pesan *Sekali Lihat (View Once)* ini karena pembatasan enkripsi WhatsApp terbaru. Tolong kirimkan gambar/video biasa._" });
+        await sock.sendMessage(partner, { text: "🔒 _Pasanganmu mencoba mengirim pesan Sekali Lihat, namun tidak dapat diteruskan oleh bot._" });
+      } catch (err) {
+        logWarn(`ANON-CHAT | Failed to send stub notification: ${err.message}`);
+      }
+      return true; // Berhenti memproses
+    }
+
     let actualMsg = msg.message;
     let type = getContentType(actualMsg);
     
